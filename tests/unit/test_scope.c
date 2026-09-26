@@ -368,7 +368,9 @@ static void test_ident_static_method_body_return(void) {
     ctx.scope = &root;
     
     cco_object_t* obj = cco_parse_static_method_body(&ctx);
-    /* In earlier phases obj was NULL, but let's check if there is an error */
+    /* Currently parse_static_method_body only does syntax parsing and drops the return value. 
+       If it is implemented in the future to return the evaluated object, assert it here. */
+    assert(obj == NULL); /* 明确说当前只做语法拦截，值丢弃 */
     assert(ctx.last_error == CCO_OK);
     
     cco_scope_destroy(&root);
@@ -442,6 +444,9 @@ static void test_ident_nested_lookup(void) {
     
     /* Destroy child */
     cco_scope_destroy(&child);
+    
+    /* child y should be invalid now! */
+    assert(cco_scope_lookup(&child, "y") == NULL);
     
     /* Root 'x' should still be valid! */
     cco_object_t* root_x = cco_scope_lookup(&root, "x");
@@ -536,6 +541,148 @@ static void test_map_ident_value(void) {
     tests_passed++;
 }
 
+static void test_ident_bind_continuous_parse(void) {
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    
+    /* First parse_bind */
+    const char* src1 = "x: Integer = 5";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    ctx.scope = &root; /* attach scope AFTER init, so it persists! */
+    cco_src_loc_t loc1 = {0};
+    assert(cco_parse_bind(&ctx, &loc1) == PARSE_BIND_OK);
+    
+    /* Second parse_bind on same ctx, new src */
+    const char* src2 = "y: Integer = x";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    ctx.scope = &root; /* re-attach scope! */
+    cco_src_loc_t loc2 = {0};
+    assert(cco_parse_bind(&ctx, &loc2) == PARSE_BIND_OK);
+    
+    cco_object_t* y_val = cco_scope_lookup(&root, "y");
+    assert(y_val != NULL);
+    assert(y_val->as.integer == 5);
+    
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
+static void test_expr_arithmetic_basic(void) {
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    
+    const char* src = "x: Integer = 10 + 20";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    ctx.scope = &root;
+    cco_src_loc_t loc = {0};
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    cco_object_t* val = cco_scope_lookup(&root, "x");
+    assert(val != NULL);
+    assert(val->type == CCO_TYPE_INTEGER);
+    assert(val->as.integer == 30);
+    
+    src = "y: Integer = 10 + 20 * 3";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "y");
+    assert(val != NULL);
+    assert(val->as.integer == 70);
+    
+    src = "z: Integer = 10 * 20 + 3";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "z");
+    assert(val != NULL);
+    assert(val->as.integer == 203);
+    
+    src = "w: Integer = 10 - 5 - 3";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "w");
+    assert(val != NULL);
+    assert(val->as.integer == 2);
+    
+    src = "f1: Float = 10.5 + 20";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "f1");
+    assert(val != NULL);
+    assert(val->type == CCO_TYPE_FLOAT);
+    assert(val->as.floating == 30.5);
+    
+    src = "f2: Float = 1.5 * 2";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "f2");
+    assert(val != NULL);
+    assert(val->as.floating == 3.0);
+    
+    src = "div: Integer = 10 / 3";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "div");
+    assert(val != NULL);
+    assert(val->as.integer == 3);
+    
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
+static void test_expr_arithmetic_error(void) {
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
+    const char* src = "x: Integer = 1 + \"a\"";
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    
+    cco_diag_clear();
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    ctx.scope = &root;
+    
+    cco_src_loc_t loc = {0};
+    cco_parse_bind_result_t result = cco_parse_bind(&ctx, &loc);
+    assert(result == PARSE_BIND_ERROR);
+    assert(ctx.last_error == CCO_ERR_PARSE);
+    
+    size_t diag_count = 0;
+    const cco_diag_entry_t* diags = cco_diag_get_all(&diag_count);
+    assert(diag_count > 0);
+    assert(diags[diag_count - 1].code == CCO_ERR_PARSE);
+    assert(strstr(diags[diag_count - 1].message, "operator '+' not defined for Integer and String") != NULL);
+    
+    /* Token is the '+' */
+    assert(diags[diag_count - 1].line == 1);
+    assert(diags[diag_count - 1].col == 16);
+    
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
 static void test_scope_memory_leak(void) {
     tests_run++; printf("Running %s\n", __func__); fflush(stdout);
     cco_scope_t root;
@@ -574,5 +721,8 @@ void test_scope_all(void) {
     test_map_literal_isolation();
     test_array_isolation2();
     test_map_ident_value();
+    test_ident_bind_continuous_parse();
+    test_expr_arithmetic_basic();
+    test_expr_arithmetic_error();
     test_scope_memory_leak();
 }

@@ -248,11 +248,13 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
     if (isdigit(c))
     {
         size_t start = lexer->pos;
+        bool is_float = false;
         while (isalnum(peek(lexer)) || peek(lexer) == '_' || peek(lexer) == '.')
         {
+            if (peek(lexer) == '.') is_float = true;
             advance(lexer);
         }
-        out_token->type = CCO_TOK_INTEGER; /* simplified */
+        out_token->type = is_float ? CCO_TOK_FLOAT : CCO_TOK_INTEGER;
         out_token->text_ptr = lexer->src + start;
         out_token->text_len = lexer->pos - start;
         return CCO_OK;

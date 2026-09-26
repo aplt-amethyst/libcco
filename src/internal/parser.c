@@ -47,6 +47,7 @@ void cco_parser_init(cco_parser_context_t* ctx, const char* src, size_t len,
 
 /* Forward declarations */
 static cco_object_t* parse_value(cco_parser_context_t* ctx);
+static cco_object_t* parse_expr(cco_parser_context_t* ctx);
 
 /* Infra-only: parse_bind implementation for Step 2 */
 typedef struct {
@@ -158,7 +159,7 @@ cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx, cco_src_loc_t*
     
     if (ctx->current_token.type == CCO_TOK_EQ) {
         advance_token(ctx);
-        cco_object_t* val = parse_value(ctx);
+        cco_object_t* val = parse_expr(ctx);
         if (!val) {
             if (out_err_loc) {
                 out_err_loc->line = ctx->current_token.line;
@@ -222,7 +223,7 @@ cco_object_t* cco_parse_static_method_body(cco_parser_context_t* ctx) {
             }
             if (ctx->current_token.type == CCO_TOK_LPAREN) {
                 advance_token(ctx);
-                cco_object_t* expr_val = parse_value(ctx);
+                cco_object_t* expr_val = parse_expr(ctx);
                 if (expr_val) cco_object_release(expr_val);
                 
                 if (ctx->current_token.type == CCO_TOK_RPAREN) advance_token(ctx);
@@ -392,6 +393,94 @@ static cco_object_t* parse_array(cco_parser_context_t* ctx)
     return obj;
 }
 
+
+static int get_binary_op_precedence(cco_token_type_t type) {
+    switch (type) {
+        case CCO_TOK_STAR:
+        case CCO_TOK_SLASH:
+            return 2;
+        case CCO_TOK_PLUS:
+        case CCO_TOK_MINUS:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
+    cco_object_t* left = parse_value(ctx);
+    if (!left) return NULL;
+    
+    while (1) {
+        int prec = get_binary_op_precedence(ctx->current_token.type);
+        if (prec < min_prec || prec == 0) {
+            break;
+        }
+        
+        cco_token_type_t op = ctx->current_token.type;
+        size_t op_line = ctx->current_token.line;
+        size_t op_col = ctx->current_token.col;
+        advance_token(ctx);
+        
+        cco_object_t* right = parse_expr_inner(ctx, prec + 1);
+        if (!right) {
+            cco_object_release(left);
+            return NULL;
+        }
+        
+        if (left->type == CCO_TYPE_INTEGER && right->type == CCO_TYPE_INTEGER) {
+            int64_t l = left->as.integer;
+            int64_t r = right->as.integer;
+            cco_object_release(left);
+            cco_object_release(right);
+            left = cco_object_create(CCO_TYPE_INTEGER);
+            if (!left) { ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
+            if (op == CCO_TOK_PLUS) left->as.integer = l + r;
+            else if (op == CCO_TOK_MINUS) left->as.integer = l - r;
+            else if (op == CCO_TOK_STAR) left->as.integer = l * r;
+            else if (op == CCO_TOK_SLASH) {
+                if (r == 0) {
+                    cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_expr", "division by zero");
+                    ctx->last_error = CCO_ERR_PARSE;
+                    cco_object_release(left);
+                    return NULL;
+                }
+                left->as.integer = l / r; /* Integer truncation */
+            }
+        } else if ((left->type == CCO_TYPE_INTEGER || left->type == CCO_TYPE_FLOAT) &&
+                   (right->type == CCO_TYPE_INTEGER || right->type == CCO_TYPE_FLOAT)) {
+            double l = (left->type == CCO_TYPE_INTEGER) ? (double)left->as.integer : left->as.floating;
+            double r = (right->type == CCO_TYPE_INTEGER) ? (double)right->as.integer : right->as.floating;
+            cco_object_release(left);
+            cco_object_release(right);
+            left = cco_object_create(CCO_TYPE_FLOAT);
+            if (!left) { ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
+            if (op == CCO_TOK_PLUS) left->as.floating = l + r;
+            else if (op == CCO_TOK_MINUS) left->as.floating = l - r;
+            else if (op == CCO_TOK_STAR) left->as.floating = l * r;
+            else if (op == CCO_TOK_SLASH) {
+                left->as.floating = l / r;
+            }
+        } else {
+            const char* op_str = (op == CCO_TOK_PLUS) ? "+" : (op == CCO_TOK_MINUS) ? "-" : (op == CCO_TOK_STAR) ? "*" : "/";
+            const char* ltype = (left->type == CCO_TYPE_STRING) ? "String" : (left->type == CCO_TYPE_INTEGER) ? "Integer" : (left->type == CCO_TYPE_FLOAT) ? "Float" : (left->type == CCO_TYPE_BOOLEAN) ? "Boolean" : (left->type == CCO_TYPE_NONE) ? "None" : (left->type == CCO_TYPE_MAP) ? "Map" : "Array";
+            const char* rtype = (right->type == CCO_TYPE_STRING) ? "String" : (right->type == CCO_TYPE_INTEGER) ? "Integer" : (right->type == CCO_TYPE_FLOAT) ? "Float" : (right->type == CCO_TYPE_BOOLEAN) ? "Boolean" : (right->type == CCO_TYPE_NONE) ? "None" : (right->type == CCO_TYPE_MAP) ? "Map" : "Array";
+            
+            char msg[256];
+            snprintf(msg, sizeof(msg), "operator '%s' not defined for %s and %s", op_str, ltype, rtype);
+            cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_expr", msg);
+            ctx->last_error = CCO_ERR_PARSE;
+            cco_object_release(left);
+            cco_object_release(right);
+            return NULL;
+        }
+    }
+    return left;
+}
+
+static cco_object_t* parse_expr(cco_parser_context_t* ctx) {
+    return parse_expr_inner(ctx, 1);
+}
 static cco_object_t* parse_value(cco_parser_context_t* ctx)
 {
     if (ctx->current_token.type == CCO_TOK_IDENTIFIER && ctx->current_token.text_len == 1 && ctx->current_token.text_ptr[0] == '$') {

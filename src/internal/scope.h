@@ -25,7 +25,11 @@ void cco_scope_destroy(cco_scope_t* scope);
 /* cco_scope_bind 接管 val 所有权，调用方释放完不能再用。 */
 cco_error_t cco_scope_bind(cco_scope_t* scope, const char* name, cco_object_t* value);
 
-/* Lookup */
+/* Lookup an object by name.
+ * Returns a borrowed pointer to the object. The object is owned by the scope.
+ * The caller MUST NOT release the returned object.
+ * If the caller needs to retain the object beyond the scope's lifetime,
+ * they must call cco_object_retain() on it. */
 cco_object_t* cco_scope_lookup(cco_scope_t* scope, const char* name);
 
 #endif /* CNT_CCO_INTERNAL_SCOPE_H */
