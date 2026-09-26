@@ -3,6 +3,8 @@
 #include <assert.h>
 #include "../../src/internal/diag.h"
 #include "../../src/internal/parser.h"
+#include "../../src/internal/symtab.h"
+#include <stdlib.h>
 
 extern int tests_run;
 extern int tests_passed;
@@ -934,6 +936,170 @@ static void test_param_no_leak(void) {
     cco_arena_destroy(&arena); tests_passed++;
 }
 
+
+static void test_template_simple(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    const char* src = "$temp.Point: (x: Integer, y: Integer)";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    cco_template_def_t* def = cco_parse_template_decl(&ctx);
+    assert(def != NULL);
+    assert(def->field_count == 2);
+    assert(strcmp(def->fields[0].name, "x") == 0);
+    assert(strcmp(def->fields[0].type_name, "Integer") == 0);
+    assert(def->fields[0].default_value == NULL);
+    for(size_t i=0; i<def->field_count; ++i) {
+        free(def->fields[i].name); if(def->fields[i].type_name) free(def->fields[i].type_name);
+        if(def->fields[i].default_value) cco_object_release(def->fields[i].default_value);
+    }
+    free(def->fields); free(def); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_template_default_val(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    const char* src = "$temp.Point: (x: Integer = 0, y: Integer = 0)";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    cco_template_def_t* def = cco_parse_template_decl(&ctx);
+    assert(def != NULL);
+    assert(def->field_count == 2);
+    assert(strcmp(def->fields[0].type_name, "Integer") == 0);
+    assert(def->fields[0].default_value != NULL);
+    assert(def->fields[0].default_value->type == CCO_TYPE_INTEGER);
+    assert(def->fields[0].default_value->as.integer == 0);
+    for(size_t i=0; i<def->field_count; ++i) {
+        free(def->fields[i].name); if(def->fields[i].type_name) free(def->fields[i].type_name);
+        if(def->fields[i].default_value) cco_object_release(def->fields[i].default_value);
+    }
+    free(def->fields); free(def); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_template_no_type_default(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    const char* src = "$temp.Foo: (bar: \"hi\")";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    cco_template_def_t* def = cco_parse_template_decl(&ctx);
+    assert(def != NULL);
+    assert(def->field_count == 1);
+    assert(strcmp(def->fields[0].name, "bar") == 0);
+    assert(def->fields[0].type_name == NULL);
+    assert(def->fields[0].default_value != NULL);
+    for(size_t i=0; i<def->field_count; ++i) {
+        free(def->fields[i].name); if(def->fields[i].type_name) free(def->fields[i].type_name);
+        if(def->fields[i].default_value) cco_object_release(def->fields[i].default_value);
+    }
+    free(def->fields); free(def); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_template_empty(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    const char* src = "$temp.Empty: ()";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    cco_template_def_t* def = cco_parse_template_decl(&ctx);
+    assert(def != NULL);
+    assert(def->field_count == 0);
+    for(size_t i=0; i<def->field_count; ++i) {
+        free(def->fields[i].name); if(def->fields[i].type_name) free(def->fields[i].type_name);
+        if(def->fields[i].default_value) cco_object_release(def->fields[i].default_value);
+    }
+    free(def->fields); free(def); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_template_dotted_name(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena);
+    const char* src = "$temp.A.B: (x: Integer)";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    cco_template_def_t* def = cco_parse_template_decl(&ctx);
+    assert(def != NULL);
+    cco_symtab_add_template(&symtab, "A.B", def);
+    assert(cco_symtab_lookup_template(&symtab, "A.B") != NULL);
+    for(size_t i=0; i<def->field_count; ++i) {
+        free(def->fields[i].name); if(def->fields[i].type_name) free(def->fields[i].type_name);
+        if(def->fields[i].default_value) cco_object_release(def->fields[i].default_value);
+    }
+    free(def->fields); free(def); free(symtab.templates.entries); cco_intern_table_destroy(&symtab.aliases); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_template_inheritance(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena);
+    const char* src1 = "$temp.Base: (a: Integer)";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    cco_template_def_t* def1 = cco_parse_template_decl(&ctx);
+    cco_symtab_add_template(&symtab, "Base", def1);
+    
+    const char* src2 = "$temp.Child + Base: (b: String)";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    cco_template_def_t* def2 = cco_parse_template_decl(&ctx);
+    cco_symtab_add_template(&symtab, "Child", def2);
+    
+    assert(def2->field_count == 2);
+    assert(strcmp(def2->fields[0].name, "a") == 0);
+    assert(strcmp(def2->fields[1].name, "b") == 0);
+    
+    for(size_t i=0; i<def1->field_count; ++i) {
+        free(def1->fields[i].name); if(def1->fields[i].type_name) free(def1->fields[i].type_name);
+        if(def1->fields[i].default_value) cco_object_release(def1->fields[i].default_value);
+    }
+    free(def1->fields); free(def1);
+    for(size_t i=0; i<def2->field_count; ++i) {
+        free(def2->fields[i].name); if(def2->fields[i].type_name) free(def2->fields[i].type_name);
+        if(def2->fields[i].default_value) cco_object_release(def2->fields[i].default_value);
+    }
+    free(def2->fields); free((void*)def2->parent_name); free(def2); free(symtab.templates.entries); cco_intern_table_destroy(&symtab.aliases); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_template_inheritance_override(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena);
+    const char* src1 = "$temp.Base: (a: Integer)";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    cco_template_def_t* def1 = cco_parse_template_decl(&ctx);
+    cco_symtab_add_template(&symtab, "Base", def1);
+    
+    const char* src2 = "$temp.Child + Base: (a: String)";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    cco_template_def_t* def2 = cco_parse_template_decl(&ctx);
+    cco_symtab_add_template(&symtab, "Child", def2);
+    
+    assert(def2->field_count == 1);
+    assert(strcmp(def2->fields[0].name, "a") == 0);
+    assert(strcmp(def2->fields[0].type_name, "String") == 0);
+    
+    for(size_t i=0; i<def1->field_count; ++i) {
+        free(def1->fields[i].name); if(def1->fields[i].type_name) free(def1->fields[i].type_name);
+        if(def1->fields[i].default_value) cco_object_release(def1->fields[i].default_value);
+    }
+    free(def1->fields); free(def1);
+    for(size_t i=0; i<def2->field_count; ++i) {
+        free(def2->fields[i].name); if(def2->fields[i].type_name) free(def2->fields[i].type_name);
+        if(def2->fields[i].default_value) cco_object_release(def2->fields[i].default_value);
+    }
+    free(def2->fields); free((void*)def2->parent_name); free(def2); free(symtab.templates.entries); cco_intern_table_destroy(&symtab.aliases); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_template_unknown_parent(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena); cco_diag_clear();
+    const char* src = "$temp.Child + Ghost: (x: Integer)";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    cco_template_def_t* def = cco_parse_template_decl(&ctx);
+    cco_error_t err = cco_symtab_add_template(&symtab, "Child", def);
+    assert(err == CCO_ERR_PARSE);
+    size_t diag_count = 0;
+    const cco_diag_entry_t* diags = cco_diag_get_all(&diag_count);
+    assert(strstr(diags[diag_count - 1].message, "unknown parent 'Ghost'") != NULL);
+    
+    for(size_t i=0; i<def->field_count; ++i) {
+        free(def->fields[i].name); if(def->fields[i].type_name) free(def->fields[i].type_name);
+        if(def->fields[i].default_value) cco_object_release(def->fields[i].default_value);
+    }
+    free(def->fields); free((void*)def->parent_name); free(def); free(symtab.templates.entries); cco_intern_table_destroy(&symtab.aliases); cco_arena_destroy(&arena); tests_passed++;
+}
+
 void test_scope_all(void) {
     test_scope_basic();
     test_parse_bind_ok();
@@ -977,4 +1143,12 @@ void test_scope_all(void) {
     test_expr_missing_rparen();
     test_unary_minus();
     test_scope_memory_leak();
+    test_template_simple();
+    test_template_default_val();
+    test_template_no_type_default();
+    test_template_empty();
+    test_template_dotted_name();
+    test_template_inheritance();
+    test_template_inheritance_override();
+    test_template_unknown_parent();
 }

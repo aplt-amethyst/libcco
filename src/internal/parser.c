@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "diag.h"
+#include "symtab.h"
 
 static void advance_token(cco_parser_context_t* ctx)
 {
@@ -798,6 +799,157 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
 
     ctx->depth--;
     return result;
+}
+
+
+cco_template_def_t* cco_parse_template_decl(cco_parser_context_t* ctx) {
+    if (ctx->current_token.type != CCO_TOK_IDENTIFIER || ctx->current_token.text_len != 5 || strncmp(ctx->current_token.text_ptr, "$temp", 5) != 0) {
+        return NULL;
+    }
+    advance_token(ctx); /* skip $temp */
+    
+    if (ctx->current_token.type != CCO_TOK_DOT) {
+        cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_template", "expected '.' after $temp");
+        ctx->last_error = CCO_ERR_PARSE; return NULL;
+    }
+    advance_token(ctx);
+    
+    char name_buf[256] = {0};
+    size_t name_len = 0;
+    while (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
+        size_t klen = ctx->current_token.text_len;
+        if (name_len + klen + 1 < sizeof(name_buf)) {
+            memcpy(name_buf + name_len, ctx->current_token.text_ptr, klen);
+            name_len += klen;
+        }
+        advance_token(ctx);
+        if (ctx->current_token.type == CCO_TOK_DOT) {
+            if (name_len + 1 < sizeof(name_buf)) {
+                name_buf[name_len++] = '.';
+            }
+            advance_token(ctx);
+        } else {
+            break;
+        }
+    }
+    if (name_len == 0) {
+        cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_template", "expected template name");
+        ctx->last_error = CCO_ERR_PARSE; return NULL;
+    }
+    
+    char* parent_name = NULL;
+    if (ctx->current_token.type == CCO_TOK_PLUS) {
+        advance_token(ctx); /* skip + */
+        if (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
+            size_t klen = ctx->current_token.text_len;
+            parent_name = malloc(klen + 1);
+            memcpy(parent_name, ctx->current_token.text_ptr, klen);
+            parent_name[klen] = '\0';
+            advance_token(ctx);
+        } else {
+            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_template", "expected parent template name");
+            ctx->last_error = CCO_ERR_PARSE; return NULL;
+        }
+    }
+    
+    if (ctx->current_token.type != CCO_TOK_COLON) {
+        cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_template", "expected ':' after template name");
+        ctx->last_error = CCO_ERR_PARSE; if (parent_name) free(parent_name); return NULL;
+    }
+    advance_token(ctx);
+    
+    if (ctx->current_token.type != CCO_TOK_LPAREN) {
+        cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_template", "expected '(' to start fields");
+        ctx->last_error = CCO_ERR_PARSE; if (parent_name) free(parent_name); return NULL;
+    }
+    advance_token(ctx);
+    
+    cco_template_def_t* def = malloc(sizeof(cco_template_def_t));
+    def->fields = NULL;
+    def->field_count = 0;
+    def->field_capacity = 0;
+    def->parent_name = parent_name;
+    
+    while (ctx->current_token.type != CCO_TOK_RPAREN && ctx->current_token.type != CCO_TOK_EOF) {
+        if (ctx->current_token.type != CCO_TOK_IDENTIFIER) {
+            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_template", "expected field name");
+            ctx->last_error = CCO_ERR_PARSE; break;
+        }
+        
+        size_t klen = ctx->current_token.text_len;
+        char* fname = malloc(klen + 1);
+        memcpy(fname, ctx->current_token.text_ptr, klen);
+        fname[klen] = '\0';
+        advance_token(ctx);
+        
+        char* type_name = NULL;
+        cco_object_t* def_val = NULL;
+        if (ctx->current_token.type == CCO_TOK_COLON) {
+            advance_token(ctx);
+            if (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
+                size_t type_len = 0;
+                char type_buf[256] = {0};
+                while (ctx->current_token.type != CCO_TOK_EQ && ctx->current_token.type != CCO_TOK_COMMA && ctx->current_token.type != CCO_TOK_RPAREN && ctx->current_token.type != CCO_TOK_EOF) {
+                    size_t tlen = ctx->current_token.text_len;
+                    if (type_len > 0 && type_len < sizeof(type_buf)) type_buf[type_len++] = ' ';
+                    if (type_len + tlen < sizeof(type_buf)) {
+                        memcpy(type_buf + type_len, ctx->current_token.text_ptr, tlen);
+                        type_len += tlen;
+                    }
+                    advance_token(ctx);
+                }
+                if (type_len > 0) {
+                    type_name = malloc(type_len + 1);
+                    memcpy(type_name, type_buf, type_len);
+                    type_name[type_len] = '\0';
+                }
+            } else {
+                def_val = parse_expr(ctx);
+                if (!def_val) {
+                    ctx->last_error = CCO_ERR_PARSE; free(fname); break;
+                }
+            }
+        }
+        
+        if (ctx->current_token.type == CCO_TOK_EQ) {
+            advance_token(ctx);
+            def_val = parse_expr(ctx);
+            if (!def_val) {
+                ctx->last_error = CCO_ERR_PARSE; free(fname); if (type_name) free(type_name); break;
+            }
+        }
+        
+        if (def->field_count == def->field_capacity) {
+            size_t new_cap = def->field_capacity == 0 ? 8 : def->field_capacity * 2;
+            def->fields = realloc(def->fields, new_cap * sizeof(cco_field_def_t));
+            def->field_capacity = new_cap;
+        }
+        def->fields[def->field_count].name = fname;
+        def->fields[def->field_count].type_name = type_name;
+        def->fields[def->field_count].default_value = def_val;
+        def->field_count++;
+        
+        if (ctx->current_token.type == CCO_TOK_COMMA) {
+            advance_token(ctx);
+        }
+    }
+    
+    if (ctx->current_token.type == CCO_TOK_RPAREN) {
+        advance_token(ctx);
+    }
+    
+    if (ctx->last_error != CCO_OK) {
+        for(size_t i=0; i<def->field_count; ++i) {
+            free(def->fields[i].name);
+            if(def->fields[i].type_name) free(def->fields[i].type_name);
+            if(def->fields[i].default_value) cco_object_release(def->fields[i].default_value);
+        }
+        free(def->fields);
+        if(def->parent_name) free((void*)def->parent_name);
+        free(def);
+        return NULL;
+    }
+    return def;
 }
 
 cco_object_t* cco_parse_document(cco_parser_context_t* ctx)

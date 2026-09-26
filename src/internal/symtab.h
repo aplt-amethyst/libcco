@@ -15,18 +15,37 @@ typedef struct
     cco_map_t values; /* Map of string identifier to integer object */
 } cco_enum_def_t;
 
-typedef struct
+typedef struct cco_field_def_t {
+    char* name;
+    char* type_name;      /* nullable */
+    cco_object_t* default_value; /* nullable, owned */
+} cco_field_def_t;
+
+typedef struct cco_template_def_s
 {
-    cco_map_t fields;        /* Map of field name to default value object */
+    cco_field_def_t* fields; /* array */
+    size_t field_count;
+    size_t field_capacity;
     const char* parent_name; /* Interned, NULL if no parent */
 } cco_template_def_t;
+
+typedef struct {
+    const char* name;
+    cco_template_def_t* def;
+} cco_symtab_template_entry_t;
+
+typedef struct
+{
+    cco_symtab_template_entry_t* entries;
+    size_t count;
+    size_t capacity;
+} cco_template_map_t;
 
 typedef struct
 {
     cco_intern_table_t aliases; /* map of interned name -> cco_typedef_t* */
     cco_intern_table_t enums;   /* map of interned name -> cco_enum_def_t* */
-    cco_intern_table_t
-        templates; /* map of interned name -> cco_template_def_t* */
+    cco_template_map_t templates;
     cco_arena_t* arena;
 } cco_symtab_t;
 
@@ -45,6 +64,8 @@ cco_error_t cco_symtab_add_template(cco_symtab_t* symtab, const char* name,
                                     cco_template_def_t* def);
 
 /* Parse top-level declarations (simplified entry point for the parser) */
+cco_template_def_t* cco_symtab_lookup_template(cco_symtab_t* symtab, const char* name);
+
 cco_error_t cco_parse_declarations(cco_parser_context_t* ctx,
                                    cco_symtab_t* symtab);
 

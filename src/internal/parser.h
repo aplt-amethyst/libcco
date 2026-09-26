@@ -49,4 +49,10 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx);
 
 cco_object_t* cco_parse_document(cco_parser_context_t* ctx);
 
+typedef struct cco_template_def_s cco_template_def_t;
+cco_template_def_t* cco_parse_template_decl(cco_parser_context_t* ctx);
+
+typedef struct cco_template_def_s cco_template_def_t;
+cco_template_def_t* cco_parse_template_decl(cco_parser_context_t* ctx);
+
 #endif /* CNT_CCO_INTERNAL_PARSER_H */
