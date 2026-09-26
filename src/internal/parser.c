@@ -394,6 +394,19 @@ static cco_object_t* parse_array(cco_parser_context_t* ctx)
 }
 
 
+static const char* cco_type_name(cco_type_t t) {
+    switch (t) {
+        case CCO_TYPE_STRING: return "String";
+        case CCO_TYPE_INTEGER: return "Integer";
+        case CCO_TYPE_FLOAT: return "Float";
+        case CCO_TYPE_BOOLEAN: return "Boolean";
+        case CCO_TYPE_NONE: return "None";
+        case CCO_TYPE_MAP: return "Map";
+        case CCO_TYPE_ARRAY: return "Array";
+        default: return "Unknown";
+    }
+}
+
 static int get_binary_op_precedence(cco_token_type_t type) {
     switch (type) {
         case CCO_TOK_STAR:
@@ -434,7 +447,7 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
             cco_object_release(left);
             cco_object_release(right);
             left = cco_object_create(CCO_TYPE_INTEGER);
-            if (!left) { ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
+            if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
             if (op == CCO_TOK_PLUS) left->as.integer = l + r;
             else if (op == CCO_TOK_MINUS) left->as.integer = l - r;
             else if (op == CCO_TOK_STAR) left->as.integer = l * r;
@@ -445,6 +458,7 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
                     cco_object_release(left);
                     return NULL;
                 }
+                /* TODO: guard INT64_MIN / -1 */
                 left->as.integer = l / r; /* Integer truncation */
             }
         } else if ((left->type == CCO_TYPE_INTEGER || left->type == CCO_TYPE_FLOAT) &&
@@ -454,17 +468,23 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
             cco_object_release(left);
             cco_object_release(right);
             left = cco_object_create(CCO_TYPE_FLOAT);
-            if (!left) { ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
+            if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
             if (op == CCO_TOK_PLUS) left->as.floating = l + r;
             else if (op == CCO_TOK_MINUS) left->as.floating = l - r;
             else if (op == CCO_TOK_STAR) left->as.floating = l * r;
             else if (op == CCO_TOK_SLASH) {
+                if (r == 0.0) {
+                    cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_expr", "division by zero");
+                    ctx->last_error = CCO_ERR_PARSE;
+                    cco_object_release(left);
+                    return NULL;
+                }
                 left->as.floating = l / r;
             }
         } else {
             const char* op_str = (op == CCO_TOK_PLUS) ? "+" : (op == CCO_TOK_MINUS) ? "-" : (op == CCO_TOK_STAR) ? "*" : "/";
-            const char* ltype = (left->type == CCO_TYPE_STRING) ? "String" : (left->type == CCO_TYPE_INTEGER) ? "Integer" : (left->type == CCO_TYPE_FLOAT) ? "Float" : (left->type == CCO_TYPE_BOOLEAN) ? "Boolean" : (left->type == CCO_TYPE_NONE) ? "None" : (left->type == CCO_TYPE_MAP) ? "Map" : "Array";
-            const char* rtype = (right->type == CCO_TYPE_STRING) ? "String" : (right->type == CCO_TYPE_INTEGER) ? "Integer" : (right->type == CCO_TYPE_FLOAT) ? "Float" : (right->type == CCO_TYPE_BOOLEAN) ? "Boolean" : (right->type == CCO_TYPE_NONE) ? "None" : (right->type == CCO_TYPE_MAP) ? "Map" : "Array";
+            const char* ltype = cco_type_name(left->type);
+            const char* rtype = cco_type_name(right->type);
             
             char msg[256];
             snprintf(msg, sizeof(msg), "operator '%s' not defined for %s and %s", op_str, ltype, rtype);
@@ -526,6 +546,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
 
     switch (ctx->current_token.type)
     {
+    /* TODO: handle unary minus (CCO_TOK_MINUS) */
     case CCO_TOK_IDENTIFIER:
     {
         size_t klen = ctx->current_token.text_len;
