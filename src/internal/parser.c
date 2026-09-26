@@ -46,6 +46,117 @@ void cco_parser_init(cco_parser_context_t* ctx, const char* src, size_t len,
 /* Forward declarations */
 static cco_object_t* parse_value(cco_parser_context_t* ctx);
 
+/* Infra-only: parse_bind implementation for Step 2 */
+typedef struct {
+    size_t lexer_pos;
+    size_t lexer_line;
+    size_t lexer_col;
+    cco_token_t current_token;
+    cco_token_t next_token;
+    cco_error_t last_error;
+} cco_parser_state_t;
+
+static void save_state(cco_parser_context_t* ctx, cco_parser_state_t* state) {
+    state->lexer_pos = ctx->lexer.pos;
+    state->lexer_line = ctx->lexer.line;
+    state->lexer_col = ctx->lexer.col;
+    state->current_token = ctx->current_token;
+    state->next_token = ctx->next_token;
+    state->last_error = ctx->last_error;
+}
+
+static void restore_state(cco_parser_context_t* ctx, const cco_parser_state_t* state) {
+    ctx->lexer.pos = state->lexer_pos;
+    ctx->lexer.line = state->lexer_line;
+    ctx->lexer.col = state->lexer_col;
+    ctx->current_token = state->current_token;
+    ctx->next_token = state->next_token;
+    ctx->last_error = state->last_error;
+}
+
+static bool skip_type_expr(cco_parser_context_t* ctx) {
+    if (ctx->current_token.type != CCO_TOK_IDENTIFIER && 
+        ctx->current_token.type != CCO_TOK_LPAREN && 
+        ctx->current_token.type != CCO_TOK_STRING) {
+        return false;
+    }
+    int angle_depth = 0;
+    int paren_depth = 0;
+    while (ctx->current_token.type != CCO_TOK_EOF) {
+        if (ctx->current_token.type == CCO_TOK_LT) angle_depth++;
+        else if (ctx->current_token.type == CCO_TOK_GT) {
+            if (angle_depth > 0) angle_depth--;
+        }
+        else if (ctx->current_token.type == CCO_TOK_LPAREN) paren_depth++;
+        else if (ctx->current_token.type == CCO_TOK_RPAREN) {
+            if (paren_depth > 0) paren_depth--;
+            else break;
+        }
+        if (angle_depth == 0 && paren_depth == 0) {
+            if (ctx->next_token.type == CCO_TOK_QMARK) {
+                advance_token(ctx);
+                advance_token(ctx);
+            } else {
+                advance_token(ctx);
+            }
+            return true;
+        }
+        advance_token(ctx);
+    }
+    return false;
+}
+
+bool cco_parse_bind(cco_parser_context_t* ctx) {
+    if (ctx->current_token.type != CCO_TOK_IDENTIFIER) {
+        return false;
+    }
+    size_t klen = ctx->current_token.text_len;
+    char* name = malloc(klen + 1);
+    if (!name) return false;
+    memcpy(name, ctx->current_token.text_ptr, klen);
+    name[klen] = '\0';
+    
+    advance_token(ctx); /* skip identifier */
+    if (ctx->current_token.type != CCO_TOK_COLON) {
+        free(name);
+        return false;
+    }
+    advance_token(ctx); /* skip colon */
+    
+    cco_parser_state_t state;
+    save_state(ctx, &state);
+    
+    if (!skip_type_expr(ctx)) {
+        restore_state(ctx, &state);
+        free(name);
+        return false;
+    }
+    
+    if (ctx->current_token.type == CCO_TOK_EQ) {
+        advance_token(ctx); /* skip = */
+        cco_object_t* val = parse_value(ctx);
+        if (!val) {
+            free(name);
+            return true; /* Error handled by parse_value */
+        }
+        if (ctx->scope) {
+            cco_scope_bind(ctx->scope, name, val);
+        }
+        cco_object_release(val);
+        free(name);
+        return true;
+    }
+    
+    /* Missing =, we rollback and report explicit error */
+    restore_state(ctx, &state);
+    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
+                    "parse_bind", "bind missing = expression");
+    ctx->last_error = CCO_ERR_PARSE;
+    free(name);
+    return false; /* We return false here so the caller knows it failed */
+}
+
+
 static cco_object_t* parse_map(cco_parser_context_t* ctx)
 {
     cco_object_t* obj = cco_object_create(CCO_TYPE_MAP);
