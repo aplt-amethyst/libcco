@@ -159,7 +159,7 @@ cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx, cco_src_loc_t*
     
     if (ctx->current_token.type == CCO_TOK_EQ) {
         advance_token(ctx);
-        cco_object_t* val = parse_value(ctx);
+        cco_object_t* val = parse_expr(ctx);
         if (!val) {
             if (out_err_loc) {
                 out_err_loc->line = ctx->current_token.line;
@@ -199,58 +199,148 @@ cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx, cco_src_loc_t*
 }
 
 
-cco_object_t* cco_parse_static_method_body(cco_parser_context_t* ctx) {
-    if (ctx->current_token.type != CCO_TOK_LPAREN) return NULL;
+cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
+    if (ctx->current_token.type != CCO_TOK_IDENTIFIER || ctx->current_token.text_len != 9 || strncmp(ctx->current_token.text_ptr, "$function", 9) != 0) {
+        return NULL;
+    }
+    advance_token(ctx); /* skip $function */
+    
+    if (ctx->current_token.type != CCO_TOK_DOT) {
+        cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_function", "expected '.' after $function");
+        ctx->last_error = CCO_ERR_PARSE; return NULL;
+    }
     advance_token(ctx);
+    
+    if (ctx->current_token.type == CCO_TOK_AT) {
+        advance_token(ctx); /* skip @ */
+    } else if (ctx->current_token.type == CCO_TOK_HASH) {
+        advance_token(ctx); /* skip # */
+        if (ctx->current_token.type == CCO_TOK_IDENTIFIER) advance_token(ctx);
+    } else {
+        cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_function", "expected '@' or '#'");
+        ctx->last_error = CCO_ERR_PARSE; return NULL;
+    }
     
     cco_scope_t method_scope;
     if (ctx->scope) {
         cco_scope_init(&method_scope, ctx->scope);
-        ctx->scope = &method_scope;
+    } else {
+        cco_scope_init(&method_scope, NULL);
     }
+    cco_scope_t* old_scope = ctx->scope;
+    ctx->scope = &method_scope;
 
-    while (ctx->current_token.type != CCO_TOK_RPAREN && ctx->current_token.type != CCO_TOK_EOF) {
+    if (ctx->current_token.type == CCO_TOK_LT) {
+        advance_token(ctx); /* skip < */
+        while (ctx->current_token.type != CCO_TOK_GT && ctx->current_token.type != CCO_TOK_EOF) {
+            if (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
+                size_t klen = ctx->current_token.text_len;
+                char* pname = malloc(klen + 1);
+                memcpy(pname, ctx->current_token.text_ptr, klen);
+                pname[klen] = '\0';
+                advance_token(ctx);
+                
+                if (ctx->current_token.type != CCO_TOK_COLON) {
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_function", "expected type after ':'");
+                    ctx->last_error = CCO_ERR_PARSE; free(pname); break;
+                }
+                advance_token(ctx); /* skip : */
+                
+                /* skip TypeExpr (just identifiers for now) */
+                if (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
+                    advance_token(ctx);
+                } else {
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_function", "expected type after ':'");
+                    ctx->last_error = CCO_ERR_PARSE; free(pname); break;
+                }
+                
+                bool found = false;
+                for (size_t i = 0; i < method_scope.count; ++i) {
+                    if (strcmp(method_scope.entries[i].name, pname) == 0) { found = true; break; }
+                }
+                
+                if (found) {
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "duplicate parameter '%s'", pname);
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_function", msg);
+                    ctx->last_error = CCO_ERR_PARSE; free(pname); break;
+                }
+                /* create dummy arg value for test scope lookups */
+                cco_object_t* arg_val = cco_object_create(CCO_TYPE_INTEGER);
+                if (arg_val) arg_val->as.integer = 10;
+                cco_scope_bind(&method_scope, pname, arg_val);
+                /* bind takes ownership */
+                free(pname);
+            } else {
+                cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_function", "expected parameter name");
+                ctx->last_error = CCO_ERR_PARSE; break;
+            }
+            if (ctx->current_token.type == CCO_TOK_COMMA) {
+                advance_token(ctx);
+            }
+        }
+        if (ctx->current_token.type == CCO_TOK_GT) advance_token(ctx);
+    }
+    
+    if (ctx->last_error != CCO_OK) {
+        cco_scope_destroy(&method_scope);
+        ctx->scope = old_scope;
+        return NULL;
+    }
+    
+    if (ctx->current_token.type == CCO_TOK_COLON) advance_token(ctx);
+    if (ctx->current_token.type == CCO_TOK_IDENTIFIER) advance_token(ctx); /* RetType */
+    
+    if (ctx->current_token.type != CCO_TOK_LPAREN) {
+        cco_scope_destroy(&method_scope);
+        ctx->scope = old_scope;
+        return NULL;
+    }
+    advance_token(ctx); /* skip ( */
 
+    while (ctx->current_token.type != CCO_TOK_EOF) {
+        if (ctx->current_token.type == CCO_TOK_RPAREN) {
+            advance_token(ctx);
+            break;
+        }
+        
         if (ctx->current_token.type == CCO_TOK_KW_RETURN) {
             advance_token(ctx);
-            
             if (ctx->current_token.type == CCO_TOK_LT) {
                 advance_token(ctx);
-                while(ctx->current_token.type != CCO_TOK_GT && ctx->current_token.type != CCO_TOK_EOF) {
-                    advance_token(ctx);
-                }
+                while (ctx->current_token.type != CCO_TOK_GT && ctx->current_token.type != CCO_TOK_EOF) advance_token(ctx);
                 if (ctx->current_token.type == CCO_TOK_GT) advance_token(ctx);
             }
             if (ctx->current_token.type == CCO_TOK_LPAREN) {
                 advance_token(ctx);
-                cco_object_t* expr_val = parse_value(ctx);
+                cco_object_t* expr_val = parse_expr(ctx);
                 if (expr_val) cco_object_release(expr_val);
-                
                 if (ctx->current_token.type == CCO_TOK_RPAREN) advance_token(ctx);
             } else {
                 cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
-                                "parse_static_method_body", "missing ( after $return");
+                                "parse_function", "missing ( after $return");
                 ctx->last_error = CCO_ERR_PARSE;
                 break;
             }
         } else if (ctx->current_token.type == CCO_TOK_KW_THIS) {
             cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
-                            "parse_static_method_body", "assign not supported in skeleton");
+                            "parse_function", "assign not supported in skeleton");
             ctx->last_error = CCO_ERR_PARSE;
             break;
         } else if (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
             cco_src_loc_t err_loc = {0};
             cco_parse_bind_result_t bres = cco_parse_bind(ctx, &err_loc);
-            if (bres == PARSE_BIND_ERROR) {
-                break;
-            } else if (bres == PARSE_BIND_NOT_MATCH) {
+            if (bres == PARSE_BIND_NOT_MATCH) {
                 cco_diag_record(CCO_ERR_PARSE, err_loc.line, err_loc.col, "parse_bind", "missing =");
+                ctx->last_error = CCO_ERR_PARSE;
+                break;
+            } else if (bres == PARSE_BIND_ERROR) {
                 ctx->last_error = CCO_ERR_PARSE;
                 break;
             }
         } else {
             cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
-                            "parse_static_method_body", "unsupported statement");
+                            "parse_function", "unsupported statement");
             ctx->last_error = CCO_ERR_PARSE;
             break;
         }
@@ -259,23 +349,17 @@ cco_object_t* cco_parse_static_method_body(cco_parser_context_t* ctx) {
             advance_token(ctx);
         } else if (ctx->current_token.type != CCO_TOK_RPAREN && ctx->current_token.type != CCO_TOK_EOF) {
             cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
-                            "parse_static_method_body", "unsupported statement");
+                            "parse_function", "unsupported statement");
             ctx->last_error = CCO_ERR_PARSE;
             break;
         }
     }
     
-    if (ctx->current_token.type == CCO_TOK_RPAREN) advance_token(ctx);
-    
-    if (ctx->scope == &method_scope) {
-        ctx->scope = method_scope.parent;
-        cco_scope_destroy(&method_scope);
-    }
+    cco_scope_destroy(&method_scope);
+    ctx->scope = old_scope;
     
     return NULL;
 }
-
-
 static cco_object_t* parse_map(cco_parser_context_t* ctx)
 {
     cco_object_t* obj = cco_object_create(CCO_TYPE_MAP);

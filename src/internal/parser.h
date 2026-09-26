@@ -44,7 +44,7 @@ typedef enum {
 
 cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx, cco_src_loc_t* out_err_loc);
 
-cco_object_t* cco_parse_static_method_body(cco_parser_context_t* ctx);
+cco_object_t* cco_parse_function(cco_parser_context_t* ctx);
 
 
 cco_object_t* cco_parse_document(cco_parser_context_t* ctx);

@@ -203,10 +203,11 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
         }
     }
 
-    if (c == '$' && peek(lexer) == '(') {
+        if (c == '$' && lexer->pos + 1 < lexer->src_len && lexer->src[lexer->pos + 1] == '(') {
         out_token->type = CCO_TOK_DOLLAR_LPAREN;
-        out_token->text_ptr = lexer->src + lexer->pos - 1;
+        out_token->text_ptr = lexer->src + lexer->pos;
         out_token->text_len = 2;
+        advance(lexer);
         advance(lexer);
         return CCO_OK;
     }
@@ -291,8 +292,14 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
     case ']':
         out_token->type = CCO_TOK_RBRACKET;
         break;
+    case '@':
+        out_token->type = CCO_TOK_AT;
+        break;
     case ':':
         out_token->type = CCO_TOK_COLON;
+        break;
+    case '#':
+        out_token->type = CCO_TOK_HASH;
         break;
     case ',':
         out_token->type = CCO_TOK_COMMA;
@@ -393,9 +400,6 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
         } else {
             out_token->type = CCO_TOK_DOT;
         }
-        break;
-    case '#':
-        out_token->type = CCO_TOK_HASH;
         break;
     default:
         cco_diag_record(CCO_ERR_INVALID_ARG, lexer->line, lexer->col,

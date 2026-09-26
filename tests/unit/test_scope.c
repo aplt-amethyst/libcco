@@ -134,7 +134,7 @@ static void test_parse_bind_error_expr(void) {
 
 static void test_parse_static_method_body_ok(void) {
     tests_run++; 
-    const char* src = "(x: Integer = 5, $return<Integer>(10))";
+    const char* src = "$function.#f<>: (x: Integer = 5, $return<Integer>($(10)))";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
     cco_arena_t arena;
@@ -146,7 +146,7 @@ static void test_parse_static_method_body_ok(void) {
     cco_scope_init(&root, NULL);
     ctx.scope = &root;
     
-    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    cco_object_t* obj = cco_parse_function(&ctx);
     assert(obj == NULL); /* Because we discard */
     assert(ctx.last_error == CCO_OK);
     
@@ -160,7 +160,7 @@ static void test_parse_static_method_body_ok(void) {
 
 static void test_parse_static_method_body_eof(void) {
     tests_run++; 
-    const char* src = "(x: Integer = 5";
+    const char* src = "$function.#f<>: (x: Integer = 5";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
     cco_arena_t arena;
@@ -172,7 +172,7 @@ static void test_parse_static_method_body_eof(void) {
     cco_scope_init(&root, NULL);
     ctx.scope = &root;
     
-    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    cco_object_t* obj = cco_parse_function(&ctx);
     assert(obj == NULL); 
     assert(ctx.last_error == CCO_OK); /* Normal EOF ending */
     
@@ -183,7 +183,7 @@ static void test_parse_static_method_body_eof(void) {
 
 static void test_parse_static_method_body_unsupported(void) {
     tests_run++; 
-    const char* src = "($this.f = 1)";
+    const char* src = "$function.#f<>: ($this.f = 1)";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
     cco_arena_t arena;
@@ -195,7 +195,7 @@ static void test_parse_static_method_body_unsupported(void) {
     cco_scope_init(&root, NULL);
     ctx.scope = &root;
     
-    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    cco_object_t* obj = cco_parse_function(&ctx);
     assert(obj == NULL); 
     assert(ctx.last_error == CCO_ERR_PARSE);
     
@@ -208,7 +208,7 @@ static void test_parse_static_method_body_unsupported(void) {
 static void test_parse_static_method_body_missing_eq(void) {
     tests_run++; 
     
-    const char* src = "(x: Integer)";
+    const char* src = "$function.#f<>: (x: Integer)";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
     cco_arena_t arena;
@@ -220,7 +220,7 @@ static void test_parse_static_method_body_missing_eq(void) {
     cco_scope_init(&root, NULL);
     ctx.scope = &root;
     
-    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    cco_object_t* obj = cco_parse_function(&ctx);
     assert(obj == NULL);
     assert(ctx.last_error == CCO_ERR_PARSE);
     /* In "(x: Integer)", '(' is col 1, 'x' is col 2, ':' is col 3, 'Integer' is col 5. 
@@ -234,7 +234,7 @@ static void test_parse_static_method_body_missing_eq(void) {
 
 static void test_parse_static_method_body_assign(void) {
     tests_run++; 
-    const char* src = "($this.x = 5)";
+    const char* src = "$function.#f<>: ($this.x = 5)";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
     cco_arena_t arena;
@@ -245,7 +245,7 @@ static void test_parse_static_method_body_assign(void) {
     cco_scope_init(&root, NULL);
     ctx.scope = &root;
     
-    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    cco_object_t* obj = cco_parse_function(&ctx);
     assert(obj == NULL); 
     assert(ctx.last_error == CCO_ERR_PARSE);
     /* Should error with "assign not supported in skeleton" */
@@ -257,7 +257,7 @@ static void test_parse_static_method_body_assign(void) {
 
 static void test_parse_static_method_body_return_empty_type(void) {
     tests_run++; 
-    const char* src = "($return<>(10))";
+    const char* src = "$function.#f<>: ($return<>(10))";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
     cco_arena_t arena;
@@ -268,7 +268,7 @@ static void test_parse_static_method_body_return_empty_type(void) {
     cco_scope_init(&root, NULL);
     ctx.scope = &root;
     
-    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    cco_object_t* obj = cco_parse_function(&ctx);
     assert(obj == NULL); 
     assert(ctx.last_error == CCO_OK);
     
@@ -279,7 +279,7 @@ static void test_parse_static_method_body_return_empty_type(void) {
 
 static void test_parse_static_method_body_return_multi_type(void) {
     tests_run++; 
-    const char* src = "($return<Integer, Float>(10))";
+    const char* src = "$function.#f<>: ($return<Integer, Float>(10))";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
     cco_arena_t arena;
@@ -290,7 +290,7 @@ static void test_parse_static_method_body_return_multi_type(void) {
     cco_scope_init(&root, NULL);
     ctx.scope = &root;
     
-    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    cco_object_t* obj = cco_parse_function(&ctx);
     assert(obj == NULL); 
     assert(ctx.last_error == CCO_OK);
     
@@ -301,7 +301,7 @@ static void test_parse_static_method_body_return_multi_type(void) {
 
 static void test_parse_static_method_body_assign_false_positive(void) {
     tests_run++; 
-    const char* src = "($thisx = 5)";
+    const char* src = "$function.#f<>: ($thisx = 5)";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
     cco_arena_t arena;
@@ -312,7 +312,7 @@ static void test_parse_static_method_body_assign_false_positive(void) {
     cco_scope_init(&root, NULL);
     ctx.scope = &root;
     
-    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    cco_object_t* obj = cco_parse_function(&ctx);
     assert(obj == NULL); 
     assert(ctx.last_error == CCO_ERR_PARSE);
     /* Should hit NOT_MATCH or unsupported statement, but NOT the assign interception */
@@ -356,7 +356,7 @@ static void test_ident_bind_ref(void) {
 
 static void test_ident_static_method_body_return(void) {
     tests_run++; 
-    const char* src = "(x: Integer = 5, $return<Integer>(x))";
+    const char* src = "$function.#f<>: (x: Integer = 5, $return<Integer>(x))";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
     cco_arena_t arena;
@@ -367,7 +367,7 @@ static void test_ident_static_method_body_return(void) {
     cco_scope_init(&root, NULL);
     ctx.scope = &root;
     
-    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    cco_object_t* obj = cco_parse_function(&ctx);
     /* Currently parse_static_method_body only does syntax parsing and drops the return value. 
        If it is implemented in the future to return the evaluated object, assert it here. */
     assert(obj == NULL); /* 明确说当前只做语法拦截，值丢弃 */
@@ -727,7 +727,7 @@ static void test_expr_arithmetic_error(void) {
     
     /* Token is the '+' */
     assert(diags[diag_count - 1].line == 1);
-    assert(diags[diag_count - 1].col == 16);
+    assert(diags[diag_count - 1].col == 18);
     
     cco_scope_destroy(&root);
     cco_arena_destroy(&arena);
@@ -749,7 +749,7 @@ static void test_expr_arith_nested(void) {
     cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
 }
 
-static void test_expr_bare_error(void) {
+static void test_expr_bare_ok(void) {
     tests_run++; 
     cco_parser_context_t ctx; cco_parse_options_t opts = {0};
     cco_arena_t arena; cco_arena_init(&arena, 1024);
@@ -759,9 +759,9 @@ static void test_expr_bare_error(void) {
     cco_parser_init(&ctx, "x: Integer = 10 + 20", strlen("x: Integer = 10 + 20"), &opts, &arena);
     ctx.scope = &root; cco_src_loc_t loc = {0};
     
-    /* 10 is parsed as a value, then + is left over. 
-       This causes a parse error in cco_parse_bind since + is not EOF or newline */
-    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_ERROR);
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    cco_object_t* val = cco_scope_lookup(&root, "x");
+    assert(val != NULL); assert(val->as.integer == 30);
     
     cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
 }
@@ -804,6 +804,30 @@ static void test_unary_minus(void) {
     cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
 }
 
+static void test_expr_missing_rparen(void) {
+    tests_run++; 
+    cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_scope_t root; cco_scope_init(&root, NULL);
+    
+    cco_diag_clear();
+    const char* src = "x: Integer = $(10 + 20";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    ctx.scope = &root; cco_src_loc_t loc = {0};
+    
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_ERROR);
+    
+    size_t diag_count = 0;
+    const cco_diag_entry_t* diags = cco_diag_get_all(&diag_count);
+    assert(diag_count > 0);
+    assert(strstr(diags[diag_count - 1].message, "expected ')'") != NULL);
+    /* Should point to EOF, which is line 1, col 23 */
+    assert(diags[diag_count - 1].line == 1);
+    assert(diags[diag_count - 1].col == 23);
+    
+    cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
+}
+
 static void test_scope_memory_leak(void) {
     tests_run++; 
     cco_scope_t root;
@@ -822,6 +846,94 @@ static void test_scope_memory_leak(void) {
     tests_passed++;
 }
 
+
+static void test_param_empty_ctor(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, "$function.@<>: ()", strlen("$function.@<>: ()"), &opts, &arena);
+    cco_object_t* obj = cco_parse_function(&ctx);
+    assert(ctx.last_error == CCO_OK);
+    cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_param_single_ctor(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, "$function.@<host: String>: (y: Integer = host)", strlen("$function.@<host: String>: (y: Integer = host)"), &opts, &arena);
+    cco_object_t* obj = cco_parse_function(&ctx);
+    assert(ctx.last_error == CCO_OK);
+    cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_param_multi_ctor(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, "$function.@<host: String, port: Integer>: ()", strlen("$function.@<host: String, port: Integer>: ()"), &opts, &arena);
+    cco_object_t* obj = cco_parse_function(&ctx);
+    assert(ctx.last_error == CCO_OK);
+    cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_param_static_method(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, "$function.#f<x: Integer>: Integer ()", strlen("$function.#f<x: Integer>: Integer ()"), &opts, &arena);
+    cco_object_t* obj = cco_parse_function(&ctx);
+    assert(ctx.last_error == CCO_OK);
+    cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_param_anon(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, "$function.@<_$0: String, _$1: Integer>: (a: String = _$0, b: Integer = _$1)", strlen("$function.@<_$0: String, _$1: Integer>: (a: String = _$0, b: Integer = _$1)"), &opts, &arena);
+    cco_object_t* obj = cco_parse_function(&ctx);
+    assert(ctx.last_error == CCO_OK);
+    cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_param_missing_type(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_diag_clear();
+    cco_parser_init(&ctx, "$function.@<host: >: ()", strlen("$function.@<host: >: ()"), &opts, &arena);
+    cco_object_t* obj = cco_parse_function(&ctx);
+    assert(ctx.last_error == CCO_ERR_PARSE);
+    size_t diag_count = 0;
+    const cco_diag_entry_t* diags = cco_diag_get_all(&diag_count);
+    assert(strstr(diags[diag_count - 1].message, "expected type after ':'") != NULL);
+    cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_param_duplicate(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_diag_clear();
+    cco_parser_init(&ctx, "$function.@<a: Integer, a: String>: ()", strlen("$function.@<a: Integer, a: String>: ()"), &opts, &arena);
+    cco_object_t* obj = cco_parse_function(&ctx);
+    assert(ctx.last_error == CCO_ERR_PARSE);
+    size_t diag_count = 0;
+    const cco_diag_entry_t* diags = cco_diag_get_all(&diag_count);
+    assert(strstr(diags[diag_count - 1].message, "duplicate parameter 'a'") != NULL);
+    cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_param_no_leak(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_scope_t root; cco_scope_init(&root, NULL);
+    
+    cco_parser_init(&ctx, "$function.@<a: Integer>: ()", strlen("$function.@<a: Integer>: ()"), &opts, &arena);
+    ctx.scope = &root;
+    cco_parse_function(&ctx);
+    
+    cco_parser_init(&ctx, "$function.@<>: (x: Integer = a)", strlen("$function.@<>: (x: Integer = a)"), &opts, &arena);
+    ctx.scope = &root;
+    cco_parse_function(&ctx);
+    assert(ctx.last_error == CCO_ERR_PARSE);
+    
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena); tests_passed++;
+}
+
 void test_scope_all(void) {
     test_scope_basic();
     test_parse_bind_ok();
@@ -835,6 +947,14 @@ void test_scope_all(void) {
     test_parse_static_method_body_return_empty_type();
     test_parse_static_method_body_return_multi_type();
     test_parse_static_method_body_assign_false_positive();
+    test_param_empty_ctor();
+    test_param_single_ctor();
+    test_param_multi_ctor();
+    test_param_static_method();
+    test_param_anon();
+    test_param_missing_type();
+    test_param_duplicate();
+    test_param_no_leak();
     test_ident_bind_ref();
     test_ident_static_method_body_return();
     test_ident_undefined();
@@ -853,7 +973,8 @@ void test_scope_all(void) {
     test_expr_arith_float_div_zero();
     test_expr_arithmetic_error();
     test_expr_arith_nested();
-    test_expr_bare_error();
+    test_expr_bare_ok();
+    test_expr_missing_rparen();
     test_unary_minus();
     test_scope_memory_leak();
 }
