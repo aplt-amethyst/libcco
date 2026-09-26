@@ -29,7 +29,16 @@ void cco_parser_init(cco_parser_context_t* ctx, const char* src, size_t len,
                      const cco_parse_options_t* opts, cco_arena_t* arena);
 
 /* Parses the document. Returns the root object or NULL on error */
-bool cco_parse_bind(cco_parser_context_t* ctx);
+
+typedef enum {
+    PARSE_BIND_OK,
+    PARSE_BIND_NOT_MATCH,
+    PARSE_BIND_ERROR
+} cco_parse_bind_result_t;
+
+cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx);
+cco_object_t* cco_parse_static_method_body(cco_parser_context_t* ctx);
+
 
 cco_object_t* cco_parse_document(cco_parser_context_t* ctx);
 

@@ -1,6 +1,7 @@
 #include "scope.h"
 #include <stdlib.h>
 #include <string.h>
+#include <cnt/cco_error.h>
 
 void cco_scope_init(cco_scope_t* scope, cco_scope_t* parent) {
     scope->parent = parent;
@@ -20,7 +21,13 @@ void cco_scope_destroy(cco_scope_t* scope) {
 }
 
 cco_error_t cco_scope_bind(cco_scope_t* scope, const char* name, cco_object_t* value) {
-    /* Simple dynamic array */
+    /* Check duplicate in current scope */
+    for (size_t i = 0; i < scope->count; i++) {
+        if (strcmp(scope->entries[i].name, name) == 0) {
+            return CCO_ERR_INVALID_ARG; /* Duplicate name */
+        }
+    }
+
     if (scope->count >= scope->capacity) {
         size_t new_cap = scope->capacity == 0 ? 8 : scope->capacity * 2;
         cco_scope_entry_t* new_entries = realloc(scope->entries, new_cap * sizeof(cco_scope_entry_t));
@@ -28,11 +35,14 @@ cco_error_t cco_scope_bind(cco_scope_t* scope, const char* name, cco_object_t* v
         scope->entries = new_entries;
         scope->capacity = new_cap;
     }
-    scope->entries[scope->count].name = strcpy(malloc(strlen(name) + 1), name);
-    if (!scope->entries[scope->count].name) return CCO_ERR_NO_MEMORY;
     
+    char* n = malloc(strlen(name) + 1);
+    if (!n) return CCO_ERR_NO_MEMORY;
+    strcpy(n, name);
+    scope->entries[scope->count].name = n;
+    
+    /* Takes ownership of value, do NOT retain */
     scope->entries[scope->count].value = value;
-    if (value) cco_object_retain(value);
     
     scope->count++;
     return CCO_OK;
