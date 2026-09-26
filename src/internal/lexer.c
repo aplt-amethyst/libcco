@@ -234,6 +234,10 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
         {
             out_token->type = CCO_TOK_KW_RETURN;
         }
+        else if (len == 5 && strncmp(out_token->text_ptr, "$this", 5) == 0)
+        {
+            out_token->type = CCO_TOK_KW_THIS;
+        }
         else
         {
             out_token->type = CCO_TOK_IDENTIFIER;

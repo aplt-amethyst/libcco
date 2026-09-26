@@ -231,6 +231,96 @@ static void test_parse_static_method_body_missing_eq(void) {
     tests_passed++;
 }
 
+static void test_parse_static_method_body_assign(void) {
+    tests_run++;
+    const char* src = "($this.x = 5)";
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    ctx.scope = &root;
+    
+    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    assert(obj == NULL); 
+    assert(ctx.last_error == CCO_ERR_PARSE);
+    /* Should error with "assign not supported in skeleton" */
+    
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
+static void test_parse_static_method_body_return_empty_type(void) {
+    tests_run++;
+    const char* src = "($return<>(10))";
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    ctx.scope = &root;
+    
+    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    assert(obj == NULL); 
+    assert(ctx.last_error == CCO_OK);
+    
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
+static void test_parse_static_method_body_return_multi_type(void) {
+    tests_run++;
+    const char* src = "($return<Integer, Float>(10))";
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    ctx.scope = &root;
+    
+    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    assert(obj == NULL); 
+    assert(ctx.last_error == CCO_OK);
+    
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
+static void test_parse_static_method_body_assign_false_positive(void) {
+    tests_run++;
+    const char* src = "($thisx = 5)";
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    ctx.scope = &root;
+    
+    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    assert(obj == NULL); 
+    assert(ctx.last_error == CCO_ERR_PARSE);
+    /* Should hit NOT_MATCH or unsupported statement, but NOT the assign interception */
+    
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
 static void test_scope_memory_leak(void) {
     tests_run++;
     cco_scope_t root;
@@ -258,5 +348,9 @@ void test_scope_all(void) {
     test_parse_static_method_body_eof();
     test_parse_static_method_body_unsupported();
     test_parse_static_method_body_missing_eq();
+    test_parse_static_method_body_assign();
+    test_parse_static_method_body_return_empty_type();
+    test_parse_static_method_body_return_multi_type();
+    test_parse_static_method_body_assign_false_positive();
     test_scope_memory_leak();
 }

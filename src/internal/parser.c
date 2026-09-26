@@ -230,7 +230,12 @@ cco_object_t* cco_parse_static_method_body(cco_parser_context_t* ctx) {
                 ctx->last_error = CCO_ERR_PARSE;
                 break;
             }
-        } else {
+        } else if (ctx->current_token.type == CCO_TOK_KW_THIS) {
+            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
+                            "parse_static_method_body", "assign not supported in skeleton");
+            ctx->last_error = CCO_ERR_PARSE;
+            break;
+        } else if (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
             cco_src_loc_t err_loc = {0};
             cco_parse_bind_result_t bres = cco_parse_bind(ctx, &err_loc);
             if (bres == PARSE_BIND_ERROR) {
@@ -240,6 +245,11 @@ cco_object_t* cco_parse_static_method_body(cco_parser_context_t* ctx) {
                 ctx->last_error = CCO_ERR_PARSE;
                 break;
             }
+        } else {
+            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
+                            "parse_static_method_body", "unsupported statement");
+            ctx->last_error = CCO_ERR_PARSE;
+            break;
         }
         
         if (ctx->current_token.type == CCO_TOK_COMMA) {

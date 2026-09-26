@@ -55,6 +55,7 @@ typedef enum
     CCO_TOK_STRING,
     CCO_TOK_IDENTIFIER,
     CCO_TOK_KW_RETURN,
+    CCO_TOK_KW_THIS,
     CCO_TOK_COMMENT
 } cco_token_type_t;
 
