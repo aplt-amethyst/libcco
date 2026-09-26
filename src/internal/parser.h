@@ -2,6 +2,7 @@
 #define CNT_CCO_INTERNAL_PARSER_H
 
 #include "lexer.h"
+#include "scope.h"
 #include "object.h"
 
 typedef struct cco_parser_context_s
@@ -19,6 +20,7 @@ typedef struct cco_parser_context_s
     cco_error_t last_error;
     bool recovery_mode;
     bool in_expr;
+    cco_scope_t* scope;
 
 } cco_parser_context_t;
 
