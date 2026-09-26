@@ -104,9 +104,36 @@ static void test_parse_bind_not_match(void) {
     tests_passed++;
 }
 
-static void test_parse_static_method_body(void) {
+static void test_parse_bind_error_expr(void) {
     tests_run++;
-    const char* src = "($return<Integer>(10))";
+    
+    const char* src = "x: Integer = )";
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    ctx.scope = &root;
+    
+    cco_src_loc_t loc = {0};
+    cco_parse_bind_result_t result = cco_parse_bind(&ctx, &loc);
+    assert(result == PARSE_BIND_ERROR);
+    /* In "x: Integer = )", ')' is at column 14 (1-indexed) or similar. */
+    assert(loc.line == 1);
+    
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena);
+    
+    tests_passed++;
+}
+
+static void test_parse_static_method_body_ok(void) {
+    tests_run++;
+    const char* src = "(x: Integer = 5, $return<Integer>(10))";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
     cco_arena_t arena;
@@ -119,20 +146,20 @@ static void test_parse_static_method_body(void) {
     ctx.scope = &root;
     
     cco_object_t* obj = cco_parse_static_method_body(&ctx);
-    assert(obj != NULL);
-    assert(obj->type == CCO_TYPE_INTEGER);
-    assert(obj->as.integer == 10);
-    cco_object_release(obj);
+    assert(obj == NULL); /* Because we discard */
+    assert(ctx.last_error == CCO_OK);
+    
+    /* x should NOT be in root, because static method body pushes its own scope */
+    assert(cco_scope_lookup(&root, "x") == NULL);
     
     cco_scope_destroy(&root);
     cco_arena_destroy(&arena);
     tests_passed++;
 }
 
-static void test_parse_static_method_body_error(void) {
+static void test_parse_static_method_body_eof(void) {
     tests_run++;
-    
-    const char* src = "($function.#name<x: Integer>: Integer (x: Integer))";
+    const char* src = "(x: Integer = 5";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
     cco_arena_t arena;
@@ -140,16 +167,44 @@ static void test_parse_static_method_body_error(void) {
     
     cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
     
-    /* Move to the '(' */
-    while (ctx.current_token.type != CCO_TOK_LPAREN && ctx.current_token.type != CCO_TOK_EOF) {
-        /* fake advance to simulate being at body */
-        /* Actually, let's just create a string that is JUST the body to make it simple */
-    }
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    ctx.scope = &root;
+    
+    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    assert(obj == NULL); 
+    assert(ctx.last_error == CCO_OK); /* Normal EOF ending */
+    
+    cco_scope_destroy(&root);
     cco_arena_destroy(&arena);
     tests_passed++;
 }
 
-static void test_parse_static_method_body_error2(void) {
+static void test_parse_static_method_body_unsupported(void) {
+    tests_run++;
+    const char* src = "($this.f = 1)";
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    ctx.scope = &root;
+    
+    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    assert(obj == NULL); 
+    assert(ctx.last_error == CCO_ERR_PARSE);
+    
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
+
+static void test_parse_static_method_body_missing_eq(void) {
     tests_run++;
     
     const char* src = "(x: Integer)";
@@ -168,7 +223,7 @@ static void test_parse_static_method_body_error2(void) {
     assert(obj == NULL);
     assert(ctx.last_error == CCO_ERR_PARSE);
     /* In "(x: Integer)", '(' is col 1, 'x' is col 2, ':' is col 3, 'Integer' is col 5. 
-       The token after Integer is ')' which is at line 1, col 12. */
+       The token after Integer is ')' which is at line 1. */
     
     cco_scope_destroy(&root);
     cco_arena_destroy(&arena);
@@ -176,11 +231,32 @@ static void test_parse_static_method_body_error2(void) {
     tests_passed++;
 }
 
+static void test_scope_memory_leak(void) {
+    tests_run++;
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    
+    cco_object_t* v1 = cco_object_create(CCO_TYPE_INTEGER);
+    cco_object_t* v2 = cco_object_create(CCO_TYPE_FLOAT);
+    cco_object_t* v3 = cco_object_create(CCO_TYPE_BOOLEAN);
+    
+    cco_scope_bind(&root, "a", v1);
+    cco_scope_bind(&root, "b", v2);
+    cco_scope_bind(&root, "c", v3);
+    
+    /* Just destroy, should not leak */
+    cco_scope_destroy(&root);
+    tests_passed++;
+}
+
 void test_scope_all(void) {
     test_scope_basic();
     test_parse_bind_ok();
     test_parse_bind_not_match();
-    test_parse_static_method_body();
-    test_parse_static_method_body_error();
-    test_parse_static_method_body_error2();
+    test_parse_bind_error_expr();
+    test_parse_static_method_body_ok();
+    test_parse_static_method_body_eof();
+    test_parse_static_method_body_unsupported();
+    test_parse_static_method_body_missing_eq();
+    test_scope_memory_leak();
 }

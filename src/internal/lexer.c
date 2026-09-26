@@ -230,6 +230,10 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
         {
             out_token->type = CCO_TOK_FALSE;
         }
+        else if (len == 7 && strncmp(out_token->text_ptr, "$return", 7) == 0)
+        {
+            out_token->type = CCO_TOK_KW_RETURN;
+        }
         else
         {
             out_token->type = CCO_TOK_IDENTIFIER;
