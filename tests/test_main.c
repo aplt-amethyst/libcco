@@ -9,16 +9,18 @@ extern void test_arena(void);
 extern void test_strbuf(void);
 extern void test_lexer(void);
 extern void test_parser(void);
+extern void test_scope_all(void);
 extern void test_expr(void);
 
 int main(void) {
     printf("Starting libcco unit tests...\n");
 
-    test_arena();
-    test_strbuf();
-    test_lexer();
-    test_parser();
-    test_expr();
+    printf("test_arena\n"); fflush(stdout); test_arena();
+    printf("test_strbuf\n"); fflush(stdout); test_strbuf();
+    printf("test_lexer\n"); fflush(stdout); test_lexer();
+    printf("test_parser\n"); fflush(stdout); test_parser();
+    printf("test_scope_all\n"); fflush(stdout); test_scope_all();
+    printf("test_expr\n"); fflush(stdout); test_expr();
 
     printf("========================================\n");
     printf("Tests run:    %d\n", tests_run);

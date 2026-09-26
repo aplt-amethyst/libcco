@@ -7,12 +7,12 @@ void test_parser(void) {
     
     /* Test 1: none is an identifier which returns error */
     obj = cco_parse_string("none", 4, NULL);
-    EXPECT_TRUE(obj == NULL);
+    printf("Finished line %d\n", __LINE__); fflush(stdout); EXPECT_TRUE(obj == NULL);
     EXPECT_EQ_INT(CCO_ERR_PARSE, cco_get_last_error());
     
     /* Test 2: true */
     obj = cco_parse_string("true", 4, NULL);
-    EXPECT_TRUE(obj != NULL);
+    printf("Finished line %d\n", __LINE__); fflush(stdout); EXPECT_TRUE(obj != NULL);
     EXPECT_EQ_INT(CCO_TYPE_BOOLEAN, cco_object_get_type(obj));
     cco_object_release(obj);
     

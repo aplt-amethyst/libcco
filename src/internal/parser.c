@@ -159,7 +159,7 @@ cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx, cco_src_loc_t*
     
     if (ctx->current_token.type == CCO_TOK_EQ) {
         advance_token(ctx);
-        cco_object_t* val = parse_expr(ctx);
+        cco_object_t* val = parse_value(ctx);
         if (!val) {
             if (out_err_loc) {
                 out_err_loc->line = ctx->current_token.line;
@@ -223,7 +223,7 @@ cco_object_t* cco_parse_static_method_body(cco_parser_context_t* ctx) {
             }
             if (ctx->current_token.type == CCO_TOK_LPAREN) {
                 advance_token(ctx);
-                cco_object_t* expr_val = parse_expr(ctx);
+                cco_object_t* expr_val = parse_value(ctx);
                 if (expr_val) cco_object_release(expr_val);
                 
                 if (ctx->current_token.type == CCO_TOK_RPAREN) advance_token(ctx);
@@ -503,17 +503,18 @@ static cco_object_t* parse_expr(cco_parser_context_t* ctx) {
 }
 static cco_object_t* parse_value(cco_parser_context_t* ctx)
 {
-    if (ctx->current_token.type == CCO_TOK_IDENTIFIER && ctx->current_token.text_len == 1 && ctx->current_token.text_ptr[0] == '$') {
-        if (ctx->next_token.type == CCO_TOK_LPAREN) {
-            advance_token(ctx); /* Skip $ */
-            bool old_in_expr = ctx->in_expr;
-            ctx->in_expr = true;
-            cco_expr_t* expr = cco_parse_expr(ctx, 0);
-            cco_object_t* obj = cco_eval_expr(ctx, expr);
-            cco_expr_free(expr);
-            ctx->in_expr = old_in_expr;
-            return obj;
+    if (ctx->current_token.type == CCO_TOK_DOLLAR_LPAREN) {
+        advance_token(ctx); /* Skip $( */
+        cco_object_t* obj = parse_expr(ctx);
+        if (!obj) return NULL;
+        if (ctx->current_token.type != CCO_TOK_RPAREN) {
+            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "expected ')' after expression");
+            ctx->last_error = CCO_ERR_PARSE;
+            cco_object_release(obj);
+            return NULL;
         }
+        advance_token(ctx); /* Skip ) */
+        return obj;
     }
     
     if (ctx->current_token.type == CCO_TOK_IDENTIFIER && ctx->current_token.text_len == 8 && strncmp(ctx->current_token.text_ptr, "$include", 8) == 0) {
@@ -546,7 +547,37 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
 
     switch (ctx->current_token.type)
     {
-    /* TODO: handle unary minus (CCO_TOK_MINUS) */
+    case CCO_TOK_MINUS:
+    {
+        /* TODO: handle parenthesized expression -(...) when implemented */
+        size_t minus_line = ctx->current_token.line;
+        size_t minus_col = ctx->current_token.col;
+        advance_token(ctx); /* skip - */
+        
+        cco_object_t* inner = parse_value(ctx);
+        if (!inner) {
+            result = NULL;
+            break;
+        }
+        
+        if (inner->type == CCO_TYPE_INTEGER) {
+            result = cco_object_create(CCO_TYPE_INTEGER);
+            if (!result) { ctx->last_error = CCO_ERR_NO_MEMORY; cco_object_release(inner); break; }
+            result->as.integer = -inner->as.integer;
+        } else if (inner->type == CCO_TYPE_FLOAT) {
+            result = cco_object_create(CCO_TYPE_FLOAT);
+            if (!result) { ctx->last_error = CCO_ERR_NO_MEMORY; cco_object_release(inner); break; }
+            result->as.floating = -inner->as.floating;
+        } else {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "unary minus not defined for %s", cco_type_name(inner->type));
+            cco_diag_record(CCO_ERR_PARSE, minus_line, minus_col, "parse_value", msg);
+            ctx->last_error = CCO_ERR_PARSE;
+            result = NULL;
+        }
+        cco_object_release(inner);
+        break;
+    }
     case CCO_TOK_IDENTIFIER:
     {
         size_t klen = ctx->current_token.text_len;

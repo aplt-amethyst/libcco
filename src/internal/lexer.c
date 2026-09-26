@@ -203,6 +203,13 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
         }
     }
 
+    if (c == '$' && peek(lexer) == '(') {
+        out_token->type = CCO_TOK_DOLLAR_LPAREN;
+        out_token->text_ptr = lexer->src + lexer->pos - 1;
+        out_token->text_len = 2;
+        advance(lexer);
+        return CCO_OK;
+    }
     if (isalpha(c) || c == '_' || c == '$')
     {
         size_t start = lexer->pos;

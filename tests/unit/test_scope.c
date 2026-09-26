@@ -580,7 +580,7 @@ static void test_expr_arith_add(void) {
     cco_arena_t arena; cco_arena_init(&arena, 1024);
     cco_scope_t root; cco_scope_init(&root, NULL);
     
-    cco_parser_init(&ctx, "x: Integer = 10 + 20", 20, &opts, &arena);
+    cco_parser_init(&ctx, "x: Integer = $(10 + 20)", strlen("x: Integer = $(10 + 20)"), &opts, &arena);
     ctx.scope = &root; cco_src_loc_t loc = {0};
     assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
     cco_object_t* val = cco_scope_lookup(&root, "x");
@@ -595,7 +595,7 @@ static void test_expr_arith_precedence_mul_first(void) {
     cco_arena_t arena; cco_arena_init(&arena, 1024);
     cco_scope_t root; cco_scope_init(&root, NULL);
     
-    cco_parser_init(&ctx, "y: Integer = 10 + 20 * 3", 24, &opts, &arena);
+    cco_parser_init(&ctx, "y: Integer = $(10 + 20 * 3)", strlen("y: Integer = $(10 + 20 * 3)"), &opts, &arena);
     ctx.scope = &root; cco_src_loc_t loc = {0};
     assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
     cco_object_t* val = cco_scope_lookup(&root, "y");
@@ -610,7 +610,7 @@ static void test_expr_arith_precedence_add_first(void) {
     cco_arena_t arena; cco_arena_init(&arena, 1024);
     cco_scope_t root; cco_scope_init(&root, NULL);
     
-    cco_parser_init(&ctx, "z: Integer = 10 * 20 + 3", 24, &opts, &arena);
+    cco_parser_init(&ctx, "z: Integer = $(10 * 20 + 3)", strlen("z: Integer = $(10 * 20 + 3)"), &opts, &arena);
     ctx.scope = &root; cco_src_loc_t loc = {0};
     assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
     cco_object_t* val = cco_scope_lookup(&root, "z");
@@ -625,7 +625,7 @@ static void test_expr_arith_sub_left_assoc(void) {
     cco_arena_t arena; cco_arena_init(&arena, 1024);
     cco_scope_t root; cco_scope_init(&root, NULL);
     
-    cco_parser_init(&ctx, "w: Integer = 10 - 5 - 3", 23, &opts, &arena);
+    cco_parser_init(&ctx, "w: Integer = $(10 - 5 - 3)", strlen("w: Integer = $(10 - 5 - 3)"), &opts, &arena);
     ctx.scope = &root; cco_src_loc_t loc = {0};
     assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
     cco_object_t* val = cco_scope_lookup(&root, "w");
@@ -640,7 +640,7 @@ static void test_expr_arith_float_promote(void) {
     cco_arena_t arena; cco_arena_init(&arena, 1024);
     cco_scope_t root; cco_scope_init(&root, NULL);
     
-    cco_parser_init(&ctx, "f1: Float = 10.5 + 20", 21, &opts, &arena);
+    cco_parser_init(&ctx, "f1: Float = $(10.5 + 20)", strlen("f1: Float = $(10.5 + 20)"), &opts, &arena);
     ctx.scope = &root; cco_src_loc_t loc = {0};
     assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
     cco_object_t* val = cco_scope_lookup(&root, "f1");
@@ -655,7 +655,7 @@ static void test_expr_arith_float_mul(void) {
     cco_arena_t arena; cco_arena_init(&arena, 1024);
     cco_scope_t root; cco_scope_init(&root, NULL);
     
-    cco_parser_init(&ctx, "f2: Float = 1.5 * 2", 19, &opts, &arena);
+    cco_parser_init(&ctx, "f2: Float = $(1.5 * 2)", strlen("f2: Float = $(1.5 * 2)"), &opts, &arena);
     ctx.scope = &root; cco_src_loc_t loc = {0};
     assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
     cco_object_t* val = cco_scope_lookup(&root, "f2");
@@ -670,7 +670,7 @@ static void test_expr_arith_int_div_trunc(void) {
     cco_arena_t arena; cco_arena_init(&arena, 1024);
     cco_scope_t root; cco_scope_init(&root, NULL);
     
-    cco_parser_init(&ctx, "div: Integer = 10 / 3", 21, &opts, &arena);
+    cco_parser_init(&ctx, "div: Integer = $(10 / 3)", strlen("div: Integer = $(10 / 3)"), &opts, &arena);
     ctx.scope = &root; cco_src_loc_t loc = {0};
     assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
     cco_object_t* val = cco_scope_lookup(&root, "div");
@@ -686,7 +686,7 @@ static void test_expr_arith_float_div_zero(void) {
     cco_scope_t root; cco_scope_init(&root, NULL);
     
     cco_diag_clear();
-    cco_parser_init(&ctx, "x: Float = 10.5 / 0.0", 21, &opts, &arena);
+    cco_parser_init(&ctx, "x: Float = $(10.5 / 0.0)", strlen("x: Float = $(10.5 / 0.0)"), &opts, &arena);
     ctx.scope = &root; cco_src_loc_t loc = {0};
     
     assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_ERROR);
@@ -701,7 +701,7 @@ static void test_expr_arith_float_div_zero(void) {
 
 static void test_expr_arithmetic_error(void) {
     tests_run++; 
-    const char* src = "x: Integer = 1 + \"a\"";
+    const char* src = "x: Integer = $(1 + \"a\")";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
     cco_arena_t arena;
@@ -732,6 +732,76 @@ static void test_expr_arithmetic_error(void) {
     cco_scope_destroy(&root);
     cco_arena_destroy(&arena);
     tests_passed++;
+}
+
+static void test_expr_arith_nested(void) {
+    tests_run++; 
+    cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_scope_t root; cco_scope_init(&root, NULL);
+    
+    cco_parser_init(&ctx, "x: Integer = $($(10 + 20) * 3)", strlen("x: Integer = $($(10 + 20) * 3)"), &opts, &arena);
+    ctx.scope = &root; cco_src_loc_t loc = {0};
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    cco_object_t* val = cco_scope_lookup(&root, "x");
+    assert(val != NULL); assert(val->as.integer == 90);
+    
+    cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_expr_bare_error(void) {
+    tests_run++; 
+    cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_scope_t root; cco_scope_init(&root, NULL);
+    
+    cco_diag_clear();
+    cco_parser_init(&ctx, "x: Integer = 10 + 20", strlen("x: Integer = 10 + 20"), &opts, &arena);
+    ctx.scope = &root; cco_src_loc_t loc = {0};
+    
+    /* 10 is parsed as a value, then + is left over. 
+       This causes a parse error in cco_parse_bind since + is not EOF or newline */
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_ERROR);
+    
+    cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_unary_minus(void) {
+    tests_run++; 
+    cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_scope_t root; cco_scope_init(&root, NULL);
+    
+    cco_parser_init(&ctx, "x: Integer = -10", strlen("x: Integer = -10"), &opts, &arena);
+    ctx.scope = &root; cco_src_loc_t loc = {0};
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    cco_object_t* val = cco_scope_lookup(&root, "x");
+    assert(val != NULL); assert(val->as.integer == -10);
+    
+    cco_parser_init(&ctx, "f: Float = -3.14", strlen("f: Float = -3.14"), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "f");
+    assert(val != NULL); assert(val->as.floating == -3.14);
+    
+    /* lookup variable */
+    cco_parser_init(&ctx, "y: Integer = -x", strlen("y: Integer = -x"), &opts, &arena);
+    ctx.scope = &root; /* re-attach */
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "y");
+    assert(val != NULL); assert(val->as.integer == 10);
+    
+    /* error case */
+    cco_diag_clear();
+    cco_parser_init(&ctx, "e: Integer = -\"str\"", strlen("e: Integer = -\"str\""), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_ERROR);
+    size_t diag_count = 0;
+    const cco_diag_entry_t* diags = cco_diag_get_all(&diag_count);
+    assert(diag_count > 0);
+    assert(strstr(diags[diag_count - 1].message, "unary minus not defined for String") != NULL);
+    
+    cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
 }
 
 static void test_scope_memory_leak(void) {
@@ -782,5 +852,8 @@ void test_scope_all(void) {
     test_expr_arith_int_div_trunc();
     test_expr_arith_float_div_zero();
     test_expr_arithmetic_error();
+    test_expr_arith_nested();
+    test_expr_bare_error();
+    test_unary_minus();
     test_scope_memory_leak();
 }

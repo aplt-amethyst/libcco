@@ -56,7 +56,8 @@ typedef enum
     CCO_TOK_IDENTIFIER,
     CCO_TOK_KW_RETURN,
     CCO_TOK_KW_THIS,
-    CCO_TOK_COMMENT
+    CCO_TOK_COMMENT,
+    CCO_TOK_DOLLAR_LPAREN
 } cco_token_type_t;
 
 typedef struct
