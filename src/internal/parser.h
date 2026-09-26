@@ -30,13 +30,20 @@ void cco_parser_init(cco_parser_context_t* ctx, const char* src, size_t len,
 
 /* Parses the document. Returns the root object or NULL on error */
 
+
+typedef struct {
+    size_t line;
+    size_t col;
+} cco_src_loc_t;
+
 typedef enum {
     PARSE_BIND_OK,
     PARSE_BIND_NOT_MATCH,
     PARSE_BIND_ERROR
 } cco_parse_bind_result_t;
 
-cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx);
+cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx, cco_src_loc_t* out_err_loc);
+
 cco_object_t* cco_parse_static_method_body(cco_parser_context_t* ctx);
 
 

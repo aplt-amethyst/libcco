@@ -115,8 +115,13 @@ static bool skip_type_expr(cco_parser_context_t* ctx) {
  * - Identifier ":" TypeExpr "=" 后解析出错 -> ERROR
  */
 
-cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx) {
+
+cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx, cco_src_loc_t* out_err_loc) {
     if (ctx->current_token.type != CCO_TOK_IDENTIFIER) {
+        if (out_err_loc) {
+            out_err_loc->line = ctx->current_token.line;
+            out_err_loc->col = ctx->current_token.col;
+        }
         return PARSE_BIND_NOT_MATCH;
     }
     size_t klen = ctx->current_token.text_len;
@@ -127,6 +132,10 @@ cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx) {
     
     advance_token(ctx);
     if (ctx->current_token.type != CCO_TOK_COLON) {
+        if (out_err_loc) {
+            out_err_loc->line = ctx->current_token.line;
+            out_err_loc->col = ctx->current_token.col;
+        }
         free(name);
         return PARSE_BIND_NOT_MATCH;
     }
@@ -136,6 +145,10 @@ cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx) {
     save_state(ctx, &state);
     
     if (!skip_type_expr(ctx)) {
+        if (out_err_loc) {
+            out_err_loc->line = ctx->current_token.line;
+            out_err_loc->col = ctx->current_token.col;
+        }
         restore_state(ctx, &state);
         free(name);
         return PARSE_BIND_NOT_MATCH;
@@ -145,6 +158,10 @@ cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx) {
         advance_token(ctx);
         cco_object_t* val = parse_value(ctx);
         if (!val) {
+            if (out_err_loc) {
+                out_err_loc->line = ctx->current_token.line;
+                out_err_loc->col = ctx->current_token.col;
+            }
             free(name);
             return PARSE_BIND_ERROR;
         }
@@ -154,6 +171,10 @@ cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx) {
                 cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
                                 "parse_bind", "Duplicate bind in same scope");
                 ctx->last_error = CCO_ERR_PARSE;
+                if (out_err_loc) {
+                    out_err_loc->line = ctx->current_token.line;
+                    out_err_loc->col = ctx->current_token.col;
+                }
                 cco_object_release(val);
                 free(name);
                 return PARSE_BIND_ERROR;
@@ -165,6 +186,10 @@ cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx) {
         return PARSE_BIND_OK;
     }
     
+    if (out_err_loc) {
+        out_err_loc->line = ctx->current_token.line;
+        out_err_loc->col = ctx->current_token.col;
+    }
     restore_state(ctx, &state);
     free(name);
     return PARSE_BIND_NOT_MATCH;
@@ -183,57 +208,50 @@ cco_object_t* cco_parse_static_method_body(cco_parser_context_t* ctx) {
     cco_object_t* ret_val = NULL;
 
     while (ctx->current_token.type != CCO_TOK_RPAREN && ctx->current_token.type != CCO_TOK_EOF) {
+
         if (ctx->current_token.type == CCO_TOK_IDENTIFIER && 
             ctx->current_token.text_len == 7 && 
             strncmp(ctx->current_token.text_ptr, "$return", 7) == 0) {
             advance_token(ctx);
+            
+            /* 存结构里，暂时不求值 */
+            struct {
+                char type_expr[256];
+                cco_object_t* expr;
+            } return_stmt = {0};
+            
             if (ctx->current_token.type == CCO_TOK_LT) {
-                while(ctx->current_token.type != CCO_TOK_GT && ctx->current_token.type != CCO_TOK_EOF) advance_token(ctx);
+                advance_token(ctx);
+                while(ctx->current_token.type != CCO_TOK_GT && ctx->current_token.type != CCO_TOK_EOF) {
+                    advance_token(ctx);
+                }
+                /* Dummy store */
+                strcpy(return_stmt.type_expr, "T");
                 if (ctx->current_token.type == CCO_TOK_GT) advance_token(ctx);
             }
             if (ctx->current_token.type == CCO_TOK_LPAREN) {
                 advance_token(ctx);
-                ret_val = parse_value(ctx);
+                return_stmt.expr = parse_value(ctx);
                 if (ctx->current_token.type == CCO_TOK_RPAREN) advance_token(ctx);
+                
+                ret_val = return_stmt.expr;
                 break;
             }
             ctx->last_error = CCO_ERR_PARSE;
             break;
         }
 
-        /* Here we expect a bind. If cco_parse_bind returns NOT_MATCH, we report "missing =" */
-        cco_parser_state_t st;
-        save_state(ctx, &st);
-        
-        cco_parse_bind_result_t bres = cco_parse_bind(ctx);
+
+        cco_src_loc_t err_loc = {0};
+        cco_parse_bind_result_t bres = cco_parse_bind(ctx, &err_loc);
         if (bres == PARSE_BIND_OK) {
             if (ctx->current_token.type == CCO_TOK_COMMA) advance_token(ctx);
             continue;
         } else if (bres == PARSE_BIND_ERROR) {
             break;
         } else {
-            /* NOT_MATCH in a context where ONLY bind/return are allowed!
-               Let's do the manual check to report "missing =" at the right location */
-            restore_state(ctx, &st);
-            
-            /* If it looks like Identifier : TypeExpr, we find the token after TypeExpr */
-            if (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
-                advance_token(ctx);
-                if (ctx->current_token.type == CCO_TOK_COLON) {
-                    advance_token(ctx);
-                    skip_type_expr(ctx);
-                    size_t err_line = ctx->current_token.line;
-                    size_t err_col = ctx->current_token.col;
-                    restore_state(ctx, &st); /* roll back again */
-                    cco_diag_record(CCO_ERR_PARSE, err_line, err_col, "parse_bind", "missing =");
-                    ctx->last_error = CCO_ERR_PARSE;
-                    break;
-                }
-            }
-            
-            restore_state(ctx, &st);
-            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
-                            "parse_static_method_body", "unsupported statement");
+            /* NOT_MATCH */
+            cco_diag_record(CCO_ERR_PARSE, err_loc.line, err_loc.col, "parse_bind", "missing =");
             ctx->last_error = CCO_ERR_PARSE;
             break;
         }

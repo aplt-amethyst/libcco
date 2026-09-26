@@ -24,7 +24,7 @@ cco_error_t cco_scope_bind(cco_scope_t* scope, const char* name, cco_object_t* v
     /* Check duplicate in current scope */
     for (size_t i = 0; i < scope->count; i++) {
         if (strcmp(scope->entries[i].name, name) == 0) {
-            return CCO_ERR_INVALID_ARG; /* Duplicate name */
+            return CCO_ERR_PARSE; /* Duplicate name */
         }
     }
 
