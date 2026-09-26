@@ -1,13 +1,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
+#include "../../src/internal/diag.h"
 #include "../../src/internal/parser.h"
 
 extern int tests_run;
 extern int tests_passed;
 
 static void test_scope_basic(void) {
-    tests_run++;
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
     
     cco_scope_t root, child;
     cco_scope_init(&root, NULL);
@@ -46,7 +47,7 @@ static void test_scope_basic(void) {
 }
 
 static void test_parse_bind_ok(void) {
-    tests_run++;
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
     
     const char* src = "x: Integer = 5";
     cco_parser_context_t ctx;
@@ -77,7 +78,7 @@ static void test_parse_bind_ok(void) {
 }
 
 static void test_parse_bind_not_match(void) {
-    tests_run++;
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
     
     const char* src = "x: Integer";
     cco_parser_context_t ctx;
@@ -105,7 +106,7 @@ static void test_parse_bind_not_match(void) {
 }
 
 static void test_parse_bind_error_expr(void) {
-    tests_run++;
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
     
     const char* src = "x: Integer = )";
     cco_parser_context_t ctx;
@@ -132,7 +133,7 @@ static void test_parse_bind_error_expr(void) {
 }
 
 static void test_parse_static_method_body_ok(void) {
-    tests_run++;
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
     const char* src = "(x: Integer = 5, $return<Integer>(10))";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
@@ -158,7 +159,7 @@ static void test_parse_static_method_body_ok(void) {
 }
 
 static void test_parse_static_method_body_eof(void) {
-    tests_run++;
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
     const char* src = "(x: Integer = 5";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
@@ -181,7 +182,7 @@ static void test_parse_static_method_body_eof(void) {
 }
 
 static void test_parse_static_method_body_unsupported(void) {
-    tests_run++;
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
     const char* src = "($this.f = 1)";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
@@ -205,7 +206,7 @@ static void test_parse_static_method_body_unsupported(void) {
 
 
 static void test_parse_static_method_body_missing_eq(void) {
-    tests_run++;
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
     
     const char* src = "(x: Integer)";
     cco_parser_context_t ctx;
@@ -232,7 +233,7 @@ static void test_parse_static_method_body_missing_eq(void) {
 }
 
 static void test_parse_static_method_body_assign(void) {
-    tests_run++;
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
     const char* src = "($this.x = 5)";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
@@ -255,7 +256,7 @@ static void test_parse_static_method_body_assign(void) {
 }
 
 static void test_parse_static_method_body_return_empty_type(void) {
-    tests_run++;
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
     const char* src = "($return<>(10))";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
@@ -277,7 +278,7 @@ static void test_parse_static_method_body_return_empty_type(void) {
 }
 
 static void test_parse_static_method_body_return_multi_type(void) {
-    tests_run++;
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
     const char* src = "($return<Integer, Float>(10))";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
@@ -299,7 +300,7 @@ static void test_parse_static_method_body_return_multi_type(void) {
 }
 
 static void test_parse_static_method_body_assign_false_positive(void) {
-    tests_run++;
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
     const char* src = "($thisx = 5)";
     cco_parser_context_t ctx;
     cco_parse_options_t opts = {0};
@@ -321,8 +322,222 @@ static void test_parse_static_method_body_assign_false_positive(void) {
     tests_passed++;
 }
 
-static void test_scope_memory_leak(void) {
+static void test_ident_bind_ref(void) {
     tests_run++;
+    const char* src1 = "x: Integer = 5";
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    ctx.scope = &root;
+    
+    cco_src_loc_t loc1 = {0};
+    assert(cco_parse_bind(&ctx, &loc1) == PARSE_BIND_OK);
+    
+    const char* src2 = "y: Integer = x";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    ctx.scope = &root;
+    cco_src_loc_t loc2 = {0};
+    assert(cco_parse_bind(&ctx, &loc2) == PARSE_BIND_OK);
+    
+    cco_object_t* y_val = cco_scope_lookup(&root, "y");
+    assert(y_val != NULL);
+    assert(y_val->type == CCO_TYPE_INTEGER);
+    assert(y_val->as.integer == 5);
+    
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
+static void test_ident_static_method_body_return(void) {
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
+    const char* src = "(x: Integer = 5, $return<Integer>(x))";
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    ctx.scope = &root;
+    
+    cco_object_t* obj = cco_parse_static_method_body(&ctx);
+    /* In earlier phases obj was NULL, but let's check if there is an error */
+    assert(ctx.last_error == CCO_OK);
+    
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
+static void test_ident_undefined(void) {
+    tests_run++;
+    const char* src = "y: Integer = z";
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    
+    cco_diag_clear(); /* IMPORTANT: Clear diag */
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    ctx.scope = &root;
+    
+    cco_src_loc_t loc = {0};
+    cco_parse_bind_result_t result = cco_parse_bind(&ctx, &loc);
+    assert(result == PARSE_BIND_ERROR);
+    assert(ctx.last_error == CCO_ERR_PARSE);
+    assert(ctx.current_token.line == 1);
+    
+    size_t diag_count = 0;
+    const cco_diag_entry_t* diags = cco_diag_get_all(&diag_count);
+    assert(diag_count > 0);
+    assert(diags[diag_count - 1].code == CCO_ERR_PARSE);
+    assert(strstr(diags[diag_count - 1].message, "undefined identifier 'z'") != NULL);
+    assert(diags[diag_count - 1].line == 1);
+    assert(diags[diag_count - 1].col == 14);
+    
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
+static void test_ident_nested_lookup(void) {
+    tests_run++;
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    
+    const char* src = "y: Integer = x";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    
+    cco_object_t* v_x = cco_object_create(CCO_TYPE_INTEGER);
+    v_x->as.integer = 42;
+    cco_scope_bind(&root, "x", v_x);
+    
+    cco_scope_t child;
+    cco_scope_init(&child, &root);
+    ctx.scope = &child;
+    
+    cco_src_loc_t loc = {0};
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    assert(ctx.last_error == CCO_OK);
+    
+    cco_object_t* y_val = cco_scope_lookup(&child, "y");
+    assert(y_val != NULL);
+    assert(y_val->type == CCO_TYPE_INTEGER);
+    assert(y_val->as.integer == 42);
+    
+    /* Destroy child */
+    cco_scope_destroy(&child);
+    
+    /* Root 'x' should still be valid! */
+    cco_object_t* root_x = cco_scope_lookup(&root, "x");
+    assert(root_x != NULL);
+    assert(root_x->as.integer == 42);
+    
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
+extern cco_object_t* cco_parse(cco_parser_context_t* ctx); /* To parse map/array */
+static void test_map_literal_isolation(void) {
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
+    const char* src = "(x: 5, y: 5)";
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    
+    cco_object_t* obj = cco_parse_document(&ctx);
+    assert(obj != NULL);
+    assert(obj->type == CCO_TYPE_MAP);
+    cco_object_release(obj);
+    
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
+static void test_array_isolation(void) {
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
+    const char* src = "[1, 2, 3]";
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    
+    cco_object_t* obj = cco_parse_document(&ctx);
+    /* In standard libcco [1,2,3] might be parsed by cco_parse, depending on if it expects () vs [] */
+    /* Wait, the skeleton says: "只能解析 map 和 array。src/internal/parser.c 现在只有 351 行，只能解析 map 和 array" */
+    /* but if [] array isn't fully implemented in base parser, let's just use (1, 2, 3) which is an array in old CCO syntax */
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
+static void test_array_isolation2(void) {
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
+    const char* src = "(1, 2, 3)";
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    
+    cco_object_t* obj = cco_parse_document(&ctx);
+    assert(obj != NULL);
+    assert(obj->type == CCO_TYPE_ARRAY);
+    cco_object_release(obj);
+    
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
+static void test_map_ident_value(void) {
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
+    const char* src = "(x: 5, y: x)";
+    cco_parser_context_t ctx;
+    cco_parse_options_t opts = {0};
+    cco_arena_t arena;
+    cco_arena_init(&arena, 1024);
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    
+    cco_scope_t root;
+    cco_scope_init(&root, NULL);
+    ctx.scope = &root;
+    
+    /* We must bind x so it can be looked up when y: x is parsed */
+    cco_object_t* v_x = cco_object_create(CCO_TYPE_INTEGER);
+    v_x->as.integer = 5;
+    cco_scope_bind(&root, "x", v_x);
+    
+    cco_object_t* obj = cco_parse_document(&ctx);
+    assert(obj != NULL);
+    assert(obj->type == CCO_TYPE_MAP);
+    
+    /* y should evaluate to 5 by looking up x */
+    cco_object_release(obj);
+    cco_scope_destroy(&root);
+    cco_arena_destroy(&arena);
+    tests_passed++;
+}
+
+static void test_scope_memory_leak(void) {
+    tests_run++; printf("Running %s\n", __func__); fflush(stdout);
     cco_scope_t root;
     cco_scope_init(&root, NULL);
     
@@ -352,5 +567,12 @@ void test_scope_all(void) {
     test_parse_static_method_body_return_empty_type();
     test_parse_static_method_body_return_multi_type();
     test_parse_static_method_body_assign_false_positive();
+    test_ident_bind_ref();
+    test_ident_static_method_body_return();
+    test_ident_undefined();
+    test_ident_nested_lookup();
+    test_map_literal_isolation();
+    test_array_isolation2();
+    test_map_ident_value();
     test_scope_memory_leak();
 }

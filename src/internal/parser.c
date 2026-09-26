@@ -36,6 +36,8 @@ void cco_parser_init(cco_parser_context_t* ctx, const char* src, size_t len,
         ctx->arena = arena;
         ctx->last_error = CCO_OK;
         ctx->recovery_mode = false;
+        ctx->scope = NULL;
+        ctx->in_expr = false;
 
         /* Prime the tokens */
         cco_lexer_next(&ctx->lexer, &ctx->next_token);
@@ -435,6 +437,38 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
 
     switch (ctx->current_token.type)
     {
+    case CCO_TOK_IDENTIFIER:
+    {
+        size_t klen = ctx->current_token.text_len;
+        char* name = malloc(klen + 1);
+        if (!name) {
+            ctx->last_error = CCO_ERR_NO_MEMORY;
+            break;
+        }
+        memcpy(name, ctx->current_token.text_ptr, klen);
+        name[klen] = '\0';
+        
+        cco_object_t* found = NULL;
+        if (ctx->scope) {
+            found = cco_scope_lookup(ctx->scope, name);
+        }
+        /* TODO: fallback to top-level symtab for enum/typedef lookup */
+        
+        if (found) {
+            result = found;
+            cco_object_retain(result);
+            advance_token(ctx);
+        } else {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "undefined identifier '%s'", name);
+            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
+                            "parse_value", msg);
+            ctx->last_error = CCO_ERR_PARSE;
+            result = NULL;
+        }
+        free(name);
+        break;
+    }
     case CCO_TOK_NONE:
         result = cco_object_create(CCO_TYPE_NONE);
         advance_token(ctx);
