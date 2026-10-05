@@ -166,4 +166,34 @@ void cco_symtab_destroy(cco_symtab_t* symtab) {
         }
     }
     if (symtab->templates.entries) free(symtab->templates.entries);
+    for (size_t i = 0; i < symtab->macros.count; ++i) {
+        if (symtab->macros.entries[i].name) free((void*)symtab->macros.entries[i].name);
+        if (symtab->macros.entries[i].ast) cco_object_release(symtab->macros.entries[i].ast);
+    }
+    if (symtab->macros.entries) free(symtab->macros.entries);
+}
+
+cco_error_t cco_symtab_add_macro(cco_symtab_t* symtab, const char* name, cco_object_t* ast) {
+    if (symtab->macros.count == symtab->macros.capacity) {
+        size_t new_cap = symtab->macros.capacity == 0 ? 4 : symtab->macros.capacity * 2;
+        cco_symtab_macro_entry_t* new_entries = realloc(symtab->macros.entries, new_cap * sizeof(cco_symtab_macro_entry_t));
+        if (!new_entries) return CCO_ERR_NO_MEMORY;
+        symtab->macros.entries = new_entries;
+        symtab->macros.capacity = new_cap;
+    }
+    symtab->macros.entries[symtab->macros.count].name = strdup(name);
+    symtab->macros.entries[symtab->macros.count].ast = ast;
+    if (ast) cco_object_retain(ast);
+    symtab->macros.count++;
+    return CCO_OK;
+}
+
+cco_object_t* cco_symtab_lookup_macro(cco_symtab_t* symtab, const char* name) {
+    if (!symtab || !name) return NULL;
+    for (size_t i = 0; i < symtab->macros.count; ++i) {
+        if (strcmp(symtab->macros.entries[i].name, name) == 0) {
+            return symtab->macros.entries[i].ast;
+        }
+    }
+    return NULL;
 }

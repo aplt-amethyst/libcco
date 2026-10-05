@@ -382,16 +382,36 @@ static cco_object_t* parse_map(cco_parser_context_t* ctx)
             ctx->last_error = CCO_ERR_PARSE;
             break;
         }
-        size_t klen = ctx->current_token.text_len;
-        char* key = malloc(klen + 1);
+        char key_buf[256] = {0};
+        size_t key_len = 0;
+        
+        while (1) {
+            size_t klen = ctx->current_token.text_len;
+            if (key_len + klen < sizeof(key_buf)) {
+                memcpy(key_buf + key_len, ctx->current_token.text_ptr, klen);
+                key_len += klen;
+            }
+            advance_token(ctx);
+            if (ctx->current_token.type == CCO_TOK_DOT) {
+                if (key_len < sizeof(key_buf)) key_buf[key_len++] = '.';
+                advance_token(ctx);
+                if (ctx->current_token.type != CCO_TOK_IDENTIFIER) {
+                    ctx->last_error = CCO_ERR_PARSE;
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+        if (ctx->last_error != CCO_OK) break;
+        char* key = malloc(key_len + 1);
         if (!key)
         {
             ctx->last_error = CCO_ERR_NO_MEMORY;
             break;
         }
-        memcpy(key, ctx->current_token.text_ptr, klen);
-        key[klen] = '\0';
-        advance_token(ctx);
+        memcpy(key, key_buf, key_len);
+        key[key_len] = '\0';
         if (ctx->current_token.type != CCO_TOK_COLON && !ctx->in_expr)
         {
             free(key);
@@ -405,7 +425,14 @@ static cco_object_t* parse_map(cco_parser_context_t* ctx)
             free(key);
             break;
         }
-        cco_error_t err = cco_map_insert(obj, key, val);
+        cco_error_t err = CCO_OK;
+        if (strncmp(key, "$define.", 8) == 0) {
+            if (ctx->symtab) {
+                cco_symtab_add_macro(ctx->symtab, key + 8, val);
+            }
+        } else {
+            err = cco_map_insert(obj, key, val);
+        }
         free(key);
         cco_object_release(val);
         if (err != CCO_OK)
@@ -1003,6 +1030,9 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
             found = cco_scope_lookup(ctx->scope, name);
         }
         /* TODO: fallback to top-level symtab for enum/typedef lookup */
+        if (!found && ctx->symtab) {
+            found = cco_symtab_lookup_macro(ctx->symtab, name);
+        }
         
         if (found) {
             result = found;

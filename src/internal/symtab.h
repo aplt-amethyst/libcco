@@ -41,11 +41,23 @@ typedef struct
     size_t capacity;
 } cco_template_map_t;
 
+typedef struct {
+    const char* name;
+    cco_object_t* ast;
+} cco_symtab_macro_entry_t;
+
+typedef struct {
+    cco_symtab_macro_entry_t* entries;
+    size_t count;
+    size_t capacity;
+} cco_macro_map_t;
+
 typedef struct cco_symtab_s
 {
     cco_intern_table_t aliases; /* map of interned name -> cco_typedef_t* */
     cco_intern_table_t enums;   /* map of interned name -> cco_enum_def_t* */
     cco_template_map_t templates;
+    cco_macro_map_t macros;
     cco_arena_t* arena;
 } cco_symtab_t;
 
@@ -72,4 +84,7 @@ cco_template_def_t* cco_symtab_lookup_template(cco_symtab_t* symtab, const char*
 cco_error_t cco_parse_declarations(cco_parser_context_t* ctx,
                                    cco_symtab_t* symtab);
 
+
+cco_error_t cco_symtab_add_macro(cco_symtab_t* symtab, const char* name, cco_object_t* ast);
+cco_object_t* cco_symtab_lookup_macro(cco_symtab_t* symtab, const char* name);
 #endif /* CNT_CCO_INTERNAL_SYMTAB_H */

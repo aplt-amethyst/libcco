@@ -1456,6 +1456,34 @@ static void test_string_interpolation(void) {
     cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
 }
 
+static void test_ast_macro(void) {
+    tests_run++;
+    cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_symtab_t symtab; cco_symtab_init(&symtab, &arena);
+    
+    const char* src = "x: Map = { $define.MACRO: 42, y: MACRO }";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    ctx.symtab = &symtab;
+    cco_scope_t root; cco_scope_init(&root, NULL);
+    ctx.scope = &root; cco_src_loc_t loc = {0};
+    
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    
+    cco_object_t* val = cco_scope_lookup(&root, "x");
+    assert(val != NULL); assert(val->type == CCO_TYPE_MAP);
+    
+    cco_object_t* def_val = cco_map_get_by_key(val, "$define.MACRO");
+    assert(def_val == NULL);
+    
+    cco_object_t* y_val = cco_map_get_by_key(val, "y");
+    assert(y_val != NULL); assert(y_val->type == CCO_TYPE_INTEGER);
+    assert(y_val->as.integer == 42);
+    
+    cco_symtab_destroy(&symtab);
+    cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
+}
+
 void test_scope_all(void) {
     test_scope_basic();
     test_parse_bind_ok();
@@ -1525,4 +1553,5 @@ void test_scope_all(void) {
     test_expr_logical();
     test_expr_string_concat();
     test_string_interpolation();
+    test_ast_macro();
 }
