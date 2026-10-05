@@ -25,6 +25,9 @@ void cco_parse_options_init(cco_parse_options_t* opts)
     opts->strict_typing = true;
     opts->restrict_filesystem = true;
     opts->base_dir = ".";
+#ifdef CCO_ENABLE_FAST
+    opts->fast_mode = true;
+#endif
 #ifdef CCO_ENABLE_FORMAT
     opts->allow_format_builtin = true;
 #endif

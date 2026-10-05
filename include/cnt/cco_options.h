@@ -55,6 +55,10 @@ typedef struct
     bool allow_include;
 #endif
 
+
+#ifdef CCO_ENABLE_FAST
+    bool fast_mode; /* Bypasses duplicate checks and hashes for extreme DOM parsing */
+#endif
 } cco_parse_options_t;
 
 /* Initializes options with default values */
