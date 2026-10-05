@@ -10,8 +10,24 @@ void cco_arena_init(cco_arena_t* a, size_t max_limit)
     if (a)
     {
         a->head = NULL;
+        a->curr = NULL;
         a->total_allocated = 0;
         a->max_allocation_limit = max_limit;
+    }
+}
+
+void cco_arena_reset(cco_arena_t* a)
+{
+    if (a)
+    {
+        cco_arena_block_t* b = a->head;
+        while (b)
+        {
+            b->used = 0;
+            b = b->next;
+        }
+        a->curr = a->head;
+        a->total_allocated = 0;
     }
 }
 
@@ -67,20 +83,31 @@ void* cco_arena_alloc(cco_arena_t* restrict a, size_t n)
         return NULL; /* Limit exceeded */
     }
 
-    if (!a->head || a->head->used + aligned_n > a->head->capacity)
+    if (!a->curr || a->curr->used + aligned_n > a->curr->capacity)
     {
-        /* Allocate new block */
-        cco_arena_block_t* new_block = cco_arena_alloc_block(aligned_n);
-        if (!new_block)
-        {
-            return NULL;
+        /* Try next block if available and large enough */
+        if (a->curr && a->curr->next && a->curr->next->capacity >= aligned_n) {
+            a->curr = a->curr->next;
+        } else {
+            /* Allocate new block */
+            cco_arena_block_t* new_block = cco_arena_alloc_block(aligned_n);
+            if (!new_block)
+            {
+                return NULL;
+            }
+            if (a->curr) {
+                new_block->next = a->curr->next;
+                a->curr->next = new_block;
+                a->curr = new_block;
+            } else {
+                a->head = new_block;
+                a->curr = new_block;
+            }
         }
-        new_block->next = a->head;
-        a->head = new_block;
     }
 
-    void* ptr = a->head->data + a->head->used;
-    a->head->used += aligned_n;
+    void* ptr = a->curr->data + a->curr->used;
+    a->curr->used += aligned_n;
     a->total_allocated += aligned_n;
 
     return ptr;

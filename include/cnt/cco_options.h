@@ -12,6 +12,7 @@ typedef struct
     size_t max_total_allocation;
     size_t max_instantiations;
     size_t max_steps;
+    struct cco_arena_s* custom_arena;
 
     bool allow_colon_instantiation;
     bool lenient_brackets;

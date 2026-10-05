@@ -32,6 +32,19 @@ extern "C"
        Caller MUST free() the returned string. Returns NULL on failure. */
     char* cco_serialize_to_string(const cco_object_t* obj, bool pretty);
 
+    /* --- Memory Pool (Arena) API for Extreme Performance --- */
+    typedef struct cco_arena_s cco_arena_t;
+    
+    /* Creates a new reusable memory pool. max_limit is max bytes, or SIZE_MAX for unlimited. */
+    cco_arena_t* cco_arena_new(size_t max_limit);
+    
+    /* Resets the memory pool pointers for reuse, achieving Zero Heap Allocation across parses. */
+    void cco_arena_reset(cco_arena_t* arena);
+    
+    /* Frees the memory pool and all associated memory. */
+    void cco_arena_free(cco_arena_t* arena);
+
+
 /* Object Types */
 #define CCO_TYPE_NONE 0
 #define CCO_TYPE_BOOLEAN 1

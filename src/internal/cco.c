@@ -54,6 +54,23 @@ void cco_parse_options_init(cco_parse_options_t* opts)
 #endif
 }
 
+cco_arena_t* cco_arena_new(size_t max_limit)
+{
+    cco_arena_t* a = (cco_arena_t*)malloc(sizeof(cco_arena_t));
+    if (a) {
+        cco_arena_init(a, max_limit);
+    }
+    return a;
+}
+
+void cco_arena_free(cco_arena_t* arena)
+{
+    if (arena) {
+        cco_arena_destroy(arena);
+        free(arena);
+    }
+}
+
 cco_object_t* cco_parse_string(const char* src, size_t len,
                                const cco_parse_options_t* opts)
 {
@@ -86,17 +103,25 @@ cco_object_t* cco_parse_string(const char* src, size_t len,
         extern CCO_THREAD_LOCAL cco_arena_t* g_active_dom_arena;
         cco_parser_context_t ctx;
 
-        cco_arena_t* dom = malloc(sizeof(cco_arena_t));
-        cco_arena_init(dom, opts->max_total_allocation);
+        cco_arena_t* dom = opts->custom_arena;
+        bool own_dom = false;
+        if (!dom) {
+            dom = malloc(sizeof(cco_arena_t));
+            cco_arena_init(dom, opts->max_total_allocation);
+            own_dom = true;
+        }
         g_active_dom_arena = dom;
         cco_parser_init(&ctx, src, len, opts, dom);
         root = cco_parse_document(&ctx);
         if (root) {
             root->dom_arena = dom;
-            root->flags |= 1; // arena node
+            root->flags |= 1; /* arena node */
+            if (!own_dom) root->flags |= 2; /* borrowed arena */
         } else {
-            cco_arena_destroy(dom);
-            free(dom);
+            if (own_dom) {
+                cco_arena_destroy(dom);
+                free(dom);
+            }
         }
         g_active_dom_arena = NULL;
         return root;

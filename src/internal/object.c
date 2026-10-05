@@ -101,7 +101,7 @@ void cco_object_release(cco_object_t* obj)
     if (!obj)
         return;
     if (obj->flags & 1) { // Arena DOM node
-        if (obj->dom_arena) {
+        if (obj->dom_arena && !(obj->flags & 2)) {
             cco_arena_destroy(obj->dom_arena);
             free(obj->dom_arena);
         }
