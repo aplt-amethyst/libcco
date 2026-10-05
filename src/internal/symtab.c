@@ -147,3 +147,23 @@ cco_error_t cco_parse_declarations(cco_parser_context_t* ctx,
     /* Not implemented for effort limit */
     return CCO_OK;
 }
+
+void cco_symtab_destroy(cco_symtab_t* symtab) {
+    if (!symtab) return;
+    cco_intern_table_destroy(&symtab->aliases);
+    cco_intern_table_destroy(&symtab->enums);
+    for (size_t i = 0; i < symtab->templates.count; ++i) {
+        cco_template_def_t* def = symtab->templates.entries[i].def;
+        if (def) {
+            for (size_t j = 0; j < def->field_count; ++j) {
+                if (def->fields[j].name) free(def->fields[j].name);
+                if (def->fields[j].type_name) free(def->fields[j].type_name);
+                if (def->fields[j].default_value) cco_object_release(def->fields[j].default_value);
+            }
+            if (def->fields) free(def->fields);
+            if (def->parent_name) free((void*)def->parent_name);
+            free(def);
+        }
+    }
+    if (symtab->templates.entries) free(symtab->templates.entries);
+}

@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "parser.h"
 #include "expr.h"
 
@@ -48,7 +49,7 @@ void cco_parser_init(cco_parser_context_t* ctx, const char* src, size_t len,
 
 /* Forward declarations */
 static cco_object_t* parse_value(cco_parser_context_t* ctx);
-static cco_object_t* parse_expr(cco_parser_context_t* ctx);
+cco_object_t* parse_expr(cco_parser_context_t* ctx);
 
 /* Infra-only: parse_bind implementation for Step 2 */
 typedef struct {
@@ -266,9 +267,9 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
                     cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_function", msg);
                     ctx->last_error = CCO_ERR_PARSE; free(pname); break;
                 }
-                /* create dummy arg value for test scope lookups */
-                cco_object_t* arg_val = cco_object_create(CCO_TYPE_INTEGER);
-                if (arg_val) arg_val->as.integer = 10;
+                /* create PARAM value for parse time lookup */
+                cco_object_t* arg_val = cco_object_create(CCO_TYPE_PARAM);
+                if (arg_val) arg_val->as.param.name = strdup(pname);
                 cco_scope_bind(&method_scope, pname, arg_val);
                 /* bind takes ownership */
                 free(pname);
@@ -488,6 +489,8 @@ static const char* cco_type_name(cco_type_t t) {
         case CCO_TYPE_NONE: return "None";
         case CCO_TYPE_MAP: return "Map";
         case CCO_TYPE_ARRAY: return "Array";
+        case CCO_TYPE_PARAM: return "Parameter";
+        case CCO_TYPE_TEMPLATE_INSTANCE: return "TemplateInstance";
         default: return "Unknown";
     }
 }
@@ -526,6 +529,22 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
             return NULL;
         }
         
+                if (left->type == CCO_TYPE_PARAM) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "parameter '%s' cannot be used in arithmetic at parse time", left->as.param.name);
+            cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_expr", msg);
+            ctx->last_error = CCO_ERR_PARSE;
+            cco_object_release(left); cco_object_release(right);
+            return NULL;
+        }
+        if (right->type == CCO_TYPE_PARAM) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "parameter '%s' cannot be used in arithmetic at parse time", right->as.param.name);
+            cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_expr", msg);
+            ctx->last_error = CCO_ERR_PARSE;
+            cco_object_release(left); cco_object_release(right);
+            return NULL;
+        }
         if (left->type == CCO_TYPE_INTEGER && right->type == CCO_TYPE_INTEGER) {
             int64_t l = left->as.integer;
             int64_t r = right->as.integer;
@@ -583,7 +602,7 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
     return left;
 }
 
-static cco_object_t* parse_expr(cco_parser_context_t* ctx) {
+cco_object_t* parse_expr(cco_parser_context_t* ctx) {
     return parse_expr_inner(ctx, 1);
 }
 static cco_object_t* parse_value(cco_parser_context_t* ctx)
@@ -645,7 +664,13 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
             break;
         }
         
-        if (inner->type == CCO_TYPE_INTEGER) {
+                if (inner->type == CCO_TYPE_PARAM) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "parameter '%s' cannot be used in arithmetic at parse time", inner->as.param.name);
+            cco_diag_record(CCO_ERR_PARSE, minus_line, minus_col, "parse_value", msg);
+            ctx->last_error = CCO_ERR_PARSE;
+            result = NULL;
+        } else if (inner->type == CCO_TYPE_INTEGER) {
             result = cco_object_create(CCO_TYPE_INTEGER);
             if (!result) { ctx->last_error = CCO_ERR_NO_MEMORY; cco_object_release(inner); break; }
             result->as.integer = -inner->as.integer;
@@ -663,6 +688,167 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         cco_object_release(inner);
         break;
     }
+    case CCO_TOK_HASH:
+    {
+        advance_token(ctx); /* skip # */
+        if (ctx->current_token.type != CCO_TOK_IDENTIFIER) {
+            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "expected template name after #");
+            ctx->last_error = CCO_ERR_PARSE; break;
+        }
+        size_t klen = ctx->current_token.text_len;
+        char* tname = malloc(klen + 1);
+        memcpy(tname, ctx->current_token.text_ptr, klen);
+        tname[klen] = '\0';
+        advance_token(ctx);
+        
+        if (ctx->current_token.type != CCO_TOK_LPAREN) {
+            free(tname);
+            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "expected '(' for template instantiation");
+            ctx->last_error = CCO_ERR_PARSE; break;
+        }
+        advance_token(ctx);
+        
+        cco_template_def_t* def = NULL;
+        if (ctx->symtab) {
+            def = cco_symtab_lookup_template(ctx->symtab, tname);
+        }
+        if (!def) {
+            char msg[128];
+            snprintf(msg, sizeof(msg), "unknown template '%s'", tname);
+            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", msg);
+            ctx->last_error = CCO_ERR_PARSE;
+            free(tname); break;
+        }
+        
+        result = cco_object_create(CCO_TYPE_TEMPLATE_INSTANCE);
+        if (!result) { ctx->last_error = CCO_ERR_NO_MEMORY; free(tname); break; }
+        result->as.tmpl_inst.template_name = cco_intern_string(&ctx->symtab->aliases, tname, strlen(tname));
+        free(tname);
+        
+        result->as.tmpl_inst.fields.keys = NULL;
+        result->as.tmpl_inst.fields.values = NULL;
+        result->as.tmpl_inst.fields.count = 0;
+        result->as.tmpl_inst.fields.capacity = 0;
+        
+        bool is_named = false;
+        bool is_positional = false;
+        size_t pos_idx = 0;
+        
+        /* Keep track of provided fields to detect duplicates and missing */
+        bool provided[256] = {0}; /* assume max 256 fields for this skeleton */
+        
+        while (ctx->current_token.type != CCO_TOK_RPAREN && ctx->current_token.type != CCO_TOK_EOF) {
+            bool current_is_named = false;
+            if (ctx->current_token.type == CCO_TOK_DOT) {
+                current_is_named = true;
+                advance_token(ctx); /* skip . */
+            }
+            
+            if (current_is_named) {
+                if (is_positional) {
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "cannot mix positional and named arguments");
+                    ctx->last_error = CCO_ERR_PARSE; break;
+                }
+                is_named = true;
+                
+                if (ctx->current_token.type != CCO_TOK_IDENTIFIER) {
+                    ctx->last_error = CCO_ERR_PARSE; break;
+                }
+                size_t flen = ctx->current_token.text_len;
+                char* fname = malloc(flen + 1);
+                memcpy(fname, ctx->current_token.text_ptr, flen);
+                fname[flen] = '\0';
+                advance_token(ctx);
+                
+                if (ctx->current_token.type != CCO_TOK_COLON) {
+                    free(fname); ctx->last_error = CCO_ERR_PARSE; break;
+                }
+                advance_token(ctx);
+                
+                cco_object_t* val = parse_expr(ctx);
+                if (!val) { free(fname); ctx->last_error = CCO_ERR_PARSE; break; }
+                
+                /* Check if field exists */
+                long fidx = -1;
+                for (size_t i = 0; i < def->field_count; ++i) {
+                    if (strcmp(def->fields[i].name, fname) == 0) { fidx = i; break; }
+                }
+                if (fidx == -1) {
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "unknown field '%s' for template '%s'", fname, result->as.tmpl_inst.template_name);
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", msg);
+                    ctx->last_error = CCO_ERR_PARSE; free(fname); cco_object_release(val); break;
+                }
+                if (provided[fidx]) {
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "duplicate field '%s'", fname);
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", msg);
+                    ctx->last_error = CCO_ERR_PARSE; free(fname); cco_object_release(val); break;
+                }
+                
+                provided[fidx] = true;
+                /* Insert into map */
+                cco_tmpl_inst_insert(result, fname, val);
+                cco_object_release(val); /* map takes ownership/ref */
+                free(fname);
+                
+            } else {
+                if (is_named) {
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "cannot mix positional and named arguments");
+                    ctx->last_error = CCO_ERR_PARSE; break;
+                }
+                is_positional = true;
+                
+                if (pos_idx >= def->field_count) {
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "too many arguments for template");
+                    ctx->last_error = CCO_ERR_PARSE; break;
+                }
+                
+                cco_object_t* val = parse_expr(ctx);
+                if (!val) { ctx->last_error = CCO_ERR_PARSE; break; }
+                
+                provided[pos_idx] = true;
+                /* Insert into map */
+                cco_tmpl_inst_insert(result, def->fields[pos_idx].name, val);
+                cco_object_release(val);
+                pos_idx++;
+            }
+            
+            if (ctx->current_token.type == CCO_TOK_COMMA) {
+                advance_token(ctx);
+            }
+        }
+        
+        if (ctx->last_error != CCO_OK) {
+            cco_object_release(result);
+            result = NULL;
+            break;
+        }
+        
+        if (ctx->current_token.type == CCO_TOK_RPAREN) {
+            advance_token(ctx);
+        }
+        
+        /* Check missing fields and apply defaults */
+        for (size_t i = 0; i < def->field_count; ++i) {
+            if (!provided[i]) {
+                if (def->fields[i].default_value) {
+                    cco_tmpl_inst_insert(result, def->fields[i].name, def->fields[i].default_value);
+                } else {
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "missing field '%s' for template '%s'", def->fields[i].name, result->as.tmpl_inst.template_name);
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", msg);
+                    ctx->last_error = CCO_ERR_PARSE;
+                    cco_object_release(result);
+                    result = NULL;
+                    break;
+                }
+            }
+        }
+        
+        break;
+    }
+
     case CCO_TOK_IDENTIFIER:
     {
         size_t klen = ctx->current_token.text_len;
@@ -802,6 +988,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
 }
 
 
+/* Note: template dotted names (like A.B) are independent templates, unrelated to A */
 cco_template_def_t* cco_parse_template_decl(cco_parser_context_t* ctx) {
     if (ctx->current_token.type != CCO_TOK_IDENTIFIER || ctx->current_token.text_len != 5 || strncmp(ctx->current_token.text_ptr, "$temp", 5) != 0) {
         return NULL;

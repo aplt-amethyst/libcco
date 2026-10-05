@@ -41,7 +41,7 @@ typedef struct
     size_t capacity;
 } cco_template_map_t;
 
-typedef struct
+typedef struct cco_symtab_s
 {
     cco_intern_table_t aliases; /* map of interned name -> cco_typedef_t* */
     cco_intern_table_t enums;   /* map of interned name -> cco_enum_def_t* */
@@ -49,6 +49,7 @@ typedef struct
     cco_arena_t* arena;
 } cco_symtab_t;
 
+void cco_symtab_destroy(cco_symtab_t* symtab);
 void cco_symtab_init(cco_symtab_t* symtab, cco_arena_t* arena);
 
 /* Type alias registration with cycle detection */
@@ -64,6 +65,8 @@ cco_error_t cco_symtab_add_template(cco_symtab_t* symtab, const char* name,
                                     cco_template_def_t* def);
 
 /* Parse top-level declarations (simplified entry point for the parser) */
+cco_template_def_t* cco_symtab_lookup_template(cco_symtab_t* symtab, const char* name);
+
 cco_template_def_t* cco_symtab_lookup_template(cco_symtab_t* symtab, const char* name);
 
 cco_error_t cco_parse_declarations(cco_parser_context_t* ctx,

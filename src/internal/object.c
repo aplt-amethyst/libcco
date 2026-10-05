@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "object.h"
 
 #include <stdlib.h>
@@ -36,6 +37,9 @@ void cco_object_release(cco_object_t* obj)
     {
         switch (obj->type)
         {
+        case CCO_TYPE_PARAM:
+            if (obj->as.param.name) free(obj->as.param.name);
+            break;
         case CCO_TYPE_STRING:
             free(obj->as.string.data);
             break;
@@ -105,6 +109,13 @@ cco_object_t* cco_object_clone(const cco_object_t* obj)
         break;
     case CCO_TYPE_FLOAT:
         copy->as.floating = obj->as.floating;
+        break;
+    case CCO_TYPE_PARAM:
+        if (obj->as.param.name) {
+            copy->as.param.name = strdup(obj->as.param.name);
+        } else {
+            copy->as.param.name = NULL;
+        }
         break;
     case CCO_TYPE_STRING:
         copy->as.string.length = obj->as.string.length;
@@ -189,6 +200,9 @@ bool cco_object_equals(const cco_object_t* a, const cco_object_t* b)
         return a->as.integer == b->as.integer;
     case CCO_TYPE_FLOAT:
         return a->as.floating == b->as.floating;
+    case CCO_TYPE_PARAM:
+        if (!a->as.param.name || !b->as.param.name) return a->as.param.name == b->as.param.name;
+        return strcmp(a->as.param.name, b->as.param.name) == 0;
     case CCO_TYPE_STRING:
         if (a->as.string.length != b->as.string.length)
             return false;
@@ -295,5 +309,31 @@ cco_error_t cco_map_insert(cco_object_t* map, const char* key,
     map->as.map.values[map->as.map.count] = value;
     map->as.map.count++;
     cco_object_retain(value);
+    return CCO_OK;
+}
+
+cco_error_t cco_tmpl_inst_insert(cco_object_t* inst, const char* key, cco_object_t* value) {
+    if (!inst || inst->type != CCO_TYPE_TEMPLATE_INSTANCE || !key || !value) return CCO_ERR_INVALID_ARG;
+    for (size_t i = 0; i < inst->as.tmpl_inst.fields.count; i++) {
+        if (strcmp(inst->as.tmpl_inst.fields.keys[i], key) == 0) {
+            cco_object_release(inst->as.tmpl_inst.fields.values[i]);
+            inst->as.tmpl_inst.fields.values[i] = value;
+            cco_object_retain(value);
+            return CCO_OK;
+        }
+    }
+    if (inst->as.tmpl_inst.fields.count >= inst->as.tmpl_inst.fields.capacity) {
+        size_t new_cap = inst->as.tmpl_inst.fields.capacity == 0 ? 8 : inst->as.tmpl_inst.fields.capacity * 2;
+        char** new_keys = realloc(inst->as.tmpl_inst.fields.keys, new_cap * sizeof(char*));
+        cco_object_t** new_vals = realloc(inst->as.tmpl_inst.fields.values, new_cap * sizeof(cco_object_t*));
+        if (!new_keys || !new_vals) return CCO_ERR_NO_MEMORY;
+        inst->as.tmpl_inst.fields.keys = new_keys;
+        inst->as.tmpl_inst.fields.values = new_vals;
+        inst->as.tmpl_inst.fields.capacity = new_cap;
+    }
+    inst->as.tmpl_inst.fields.keys[inst->as.tmpl_inst.fields.count] = strdup(key);
+    inst->as.tmpl_inst.fields.values[inst->as.tmpl_inst.fields.count] = value;
+    cco_object_retain(value);
+    inst->as.tmpl_inst.fields.count++;
     return CCO_OK;
 }

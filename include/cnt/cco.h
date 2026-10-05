@@ -41,6 +41,7 @@ extern "C"
 #define CCO_TYPE_ARRAY 5
 #define CCO_TYPE_MAP 6
 #define CCO_TYPE_TEMPLATE_INSTANCE 7
+#define CCO_TYPE_PARAM 8
 
     /* --- Object Model APIs --- */
 

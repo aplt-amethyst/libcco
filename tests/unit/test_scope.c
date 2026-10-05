@@ -918,6 +918,252 @@ static void test_param_duplicate(void) {
     cco_arena_destroy(&arena); tests_passed++;
 }
 
+
+static void test_param_arith_fail(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_diag_clear();
+    const char* src = "$function.#f<x: Integer>: Integer ($return<Integer>(x * x))";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    cco_object_t* obj = cco_parse_function(&ctx);
+    assert(ctx.last_error == CCO_ERR_PARSE);
+    size_t diag_count = 0;
+    const cco_diag_entry_t* diags = cco_diag_get_all(&diag_count);
+    assert(strstr(diags[diag_count - 1].message, "parameter 'x' cannot be used in arithmetic at parse time") != NULL);
+    cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_param_return_pass(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_diag_clear();
+    const char* src = "$function.#f<x: Integer>: Integer ($return<Integer>(x))";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    cco_object_t* obj = cco_parse_function(&ctx);
+    assert(ctx.last_error == CCO_OK);
+    if(obj) cco_object_release(obj);
+    cco_arena_destroy(&arena); tests_passed++;
+}
+
+
+
+static void test_tmpl_inst_pos_all(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena); cco_diag_clear();
+    const char* src1 = "$temp.Point: (x: Integer, y: Integer)";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    cco_symtab_add_template(&symtab, "Point", cco_parse_template_decl(&ctx));
+    
+    const char* src2 = "#Point(1, 2)";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    ctx.symtab = &symtab;
+    cco_object_t* p = parse_expr(&ctx);
+    assert(p != NULL && p->type == CCO_TYPE_TEMPLATE_INSTANCE);
+    assert(ctx.last_error == CCO_OK);
+    cco_object_t* x = NULL; cco_object_t* y = NULL;
+    for(size_t i=0; i<p->as.tmpl_inst.fields.count; ++i) {
+        if(strcmp(p->as.tmpl_inst.fields.keys[i], "x") == 0) x = p->as.tmpl_inst.fields.values[i];
+        if(strcmp(p->as.tmpl_inst.fields.keys[i], "y") == 0) y = p->as.tmpl_inst.fields.values[i];
+    }
+    assert(x && x->type == CCO_TYPE_INTEGER && x->as.integer == 1);
+    assert(y && y->type == CCO_TYPE_INTEGER && y->as.integer == 2);
+    
+    cco_object_release(p); cco_symtab_destroy(&symtab); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_tmpl_inst_pos_default(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena); cco_diag_clear();
+    const char* src1 = "$temp.Server: (host: String, port: Integer = 8080)";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    cco_symtab_add_template(&symtab, "Server", cco_parse_template_decl(&ctx));
+    
+    const char* src2 = "#Server(\"localhost\")";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    ctx.symtab = &symtab;
+    cco_object_t* s = parse_expr(&ctx);
+    assert(s && s->type == CCO_TYPE_TEMPLATE_INSTANCE);
+    assert(ctx.last_error == CCO_OK);
+    cco_object_t* port = NULL;
+    for(size_t i=0; i<s->as.tmpl_inst.fields.count; ++i) {
+        if(strcmp(s->as.tmpl_inst.fields.keys[i], "port") == 0) port = s->as.tmpl_inst.fields.values[i];
+    }
+    assert(port && port->type == CCO_TYPE_INTEGER && port->as.integer == 8080);
+    
+    cco_object_release(s); cco_symtab_destroy(&symtab); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_tmpl_inst_pos_missing(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena); cco_diag_clear();
+    const char* src1 = "$temp.Server: (host: String, port: Integer, timeout: Integer = 30)";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    cco_symtab_add_template(&symtab, "Server", cco_parse_template_decl(&ctx));
+    
+    const char* src2 = "#Server(\"localhost\")";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    ctx.symtab = &symtab;
+    cco_object_t* s = parse_expr(&ctx);
+    assert(s == NULL);
+    assert(ctx.last_error == CCO_ERR_PARSE);
+    size_t diag_count = 0;
+    const cco_diag_entry_t* diags = cco_diag_get_all(&diag_count);
+    assert(strstr(diags[diag_count - 1].message, "missing field 'port'") != NULL);
+    
+    cco_symtab_destroy(&symtab); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_tmpl_inst_named_all(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena); cco_diag_clear();
+    const char* src1 = "$temp.Server: (host: String, port: Integer = 8080)";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    cco_symtab_add_template(&symtab, "Server", cco_parse_template_decl(&ctx));
+    
+    const char* src2 = "#Server(.host: \"localhost\", .port: 80)";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    ctx.symtab = &symtab;
+    cco_object_t* s = parse_expr(&ctx);
+    assert(s && s->type == CCO_TYPE_TEMPLATE_INSTANCE);
+    assert(ctx.last_error == CCO_OK);
+    
+    cco_object_release(s); cco_symtab_destroy(&symtab); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_tmpl_inst_named_order(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena); cco_diag_clear();
+    const char* src1 = "$temp.Server: (host: String, port: Integer = 8080)";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    cco_symtab_add_template(&symtab, "Server", cco_parse_template_decl(&ctx));
+    
+    const char* src2 = "#Server(.port: 80, .host: \"localhost\")";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    ctx.symtab = &symtab;
+    cco_object_t* s = parse_expr(&ctx);
+    assert(s && s->type == CCO_TYPE_TEMPLATE_INSTANCE);
+    assert(ctx.last_error == CCO_OK);
+    
+    cco_object_release(s); cco_symtab_destroy(&symtab); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_tmpl_inst_named_default(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena); cco_diag_clear();
+    const char* src1 = "$temp.Server: (host: String, port: Integer = 8080)";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    cco_symtab_add_template(&symtab, "Server", cco_parse_template_decl(&ctx));
+    
+    const char* src2 = "#Server(.host: \"localhost\")";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    ctx.symtab = &symtab;
+    cco_object_t* s = parse_expr(&ctx);
+    assert(s && s->type == CCO_TYPE_TEMPLATE_INSTANCE);
+    assert(ctx.last_error == CCO_OK);
+    cco_object_t* port = NULL;
+    for(size_t i=0; i<s->as.tmpl_inst.fields.count; ++i) {
+        if(strcmp(s->as.tmpl_inst.fields.keys[i], "port") == 0) port = s->as.tmpl_inst.fields.values[i];
+    }
+    assert(port && port->type == CCO_TYPE_INTEGER && port->as.integer == 8080);
+    
+    cco_object_release(s); cco_symtab_destroy(&symtab); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_tmpl_inst_unknown_field(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena); cco_diag_clear();
+    const char* src1 = "$temp.Server: (host: String, port: Integer = 8080)";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    cco_symtab_add_template(&symtab, "Server", cco_parse_template_decl(&ctx));
+    
+    const char* src2 = "#Server(.host: \"x\", .foo: 1)";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    ctx.symtab = &symtab;
+    cco_object_t* s = parse_expr(&ctx);
+    assert(s == NULL);
+    assert(ctx.last_error == CCO_ERR_PARSE);
+    size_t diag_count = 0;
+    const cco_diag_entry_t* diags = cco_diag_get_all(&diag_count);
+    assert(strstr(diags[diag_count - 1].message, "unknown field 'foo'") != NULL);
+    
+    cco_symtab_destroy(&symtab); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_tmpl_inst_missing_nodef(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena); cco_diag_clear();
+    const char* src1 = "$temp.Server: (host: String, port: Integer = 8080)";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    cco_symtab_add_template(&symtab, "Server", cco_parse_template_decl(&ctx));
+    
+    const char* src2 = "#Server()";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    ctx.symtab = &symtab;
+    cco_object_t* s = parse_expr(&ctx);
+    assert(s == NULL);
+    assert(ctx.last_error == CCO_ERR_PARSE);
+    size_t diag_count = 0;
+    const cco_diag_entry_t* diags = cco_diag_get_all(&diag_count);
+    assert(strstr(diags[diag_count - 1].message, "missing field 'host'") != NULL);
+    
+    cco_symtab_destroy(&symtab); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_tmpl_inst_mix(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena); cco_diag_clear();
+    const char* src1 = "$temp.Server: (host: String, port: Integer = 8080)";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    cco_symtab_add_template(&symtab, "Server", cco_parse_template_decl(&ctx));
+    
+    const char* src2 = "#Server(\"localhost\", .port: 80)";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    ctx.symtab = &symtab;
+    cco_object_t* s = parse_expr(&ctx);
+    assert(s == NULL);
+    assert(ctx.last_error == CCO_ERR_PARSE);
+    size_t diag_count = 0;
+    const cco_diag_entry_t* diags = cco_diag_get_all(&diag_count);
+    assert(strstr(diags[diag_count - 1].message, "cannot mix positional and named arguments") != NULL);
+    
+    cco_symtab_destroy(&symtab); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_tmpl_inst_inherit_pos(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena); cco_diag_clear();
+    const char* src1 = "$temp.Server: (host: String, port: Integer = 8080)";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    cco_symtab_add_template(&symtab, "Server", cco_parse_template_decl(&ctx));
+    
+    const char* src2 = "$temp.SecureServer + Server: (cert: String)";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    cco_symtab_add_template(&symtab, "SecureServer", cco_parse_template_decl(&ctx));
+    
+    const char* src3 = "#SecureServer(\"localhost\", 8080, \"/etc/cert.pem\")";
+    cco_parser_init(&ctx, src3, strlen(src3), &opts, &arena);
+    ctx.symtab = &symtab;
+    cco_object_t* s = parse_expr(&ctx);
+    assert(s && s->type == CCO_TYPE_TEMPLATE_INSTANCE);
+    assert(ctx.last_error == CCO_OK);
+    
+    cco_object_t* cert = NULL;
+    for(size_t i=0; i<s->as.tmpl_inst.fields.count; ++i) {
+        if(strcmp(s->as.tmpl_inst.fields.keys[i], "cert") == 0) cert = s->as.tmpl_inst.fields.values[i];
+    }
+    assert(cert != NULL);
+    
+    cco_object_release(s); cco_symtab_destroy(&symtab); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_symtab_leak(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena);
+    const char* src = "$temp.Point: (x: Integer = 0, y: Integer = 0)";
+    cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
+    cco_template_def_t* def = cco_parse_template_decl(&ctx);
+    cco_symtab_add_template(&symtab, "Point", def);
+    cco_symtab_destroy(&symtab); cco_arena_destroy(&arena); tests_passed++;
+}
+
 static void test_param_no_leak(void) {
     tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
     cco_arena_t arena; cco_arena_init(&arena, 1024);
@@ -1120,6 +1366,8 @@ void test_scope_all(void) {
     test_param_anon();
     test_param_missing_type();
     test_param_duplicate();
+    test_param_arith_fail();
+    test_param_return_pass();
     test_param_no_leak();
     test_ident_bind_ref();
     test_ident_static_method_body_return();
@@ -1151,4 +1399,15 @@ void test_scope_all(void) {
     test_template_inheritance();
     test_template_inheritance_override();
     test_template_unknown_parent();
+    test_tmpl_inst_pos_all();
+    test_tmpl_inst_pos_default();
+    test_tmpl_inst_pos_missing();
+    test_tmpl_inst_named_all();
+    test_tmpl_inst_named_order();
+    test_tmpl_inst_named_default();
+    test_tmpl_inst_unknown_field();
+    test_tmpl_inst_missing_nodef();
+    test_tmpl_inst_mix();
+    test_tmpl_inst_inherit_pos();
+    test_symtab_leak();
 }

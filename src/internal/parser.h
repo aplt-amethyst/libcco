@@ -21,6 +21,7 @@ typedef struct cco_parser_context_s
     bool recovery_mode;
     bool in_expr;
     cco_scope_t* scope;
+    struct cco_symtab_s* symtab;
 
 } cco_parser_context_t;
 
@@ -42,6 +43,7 @@ typedef enum {
     PARSE_BIND_ERROR
 } cco_parse_bind_result_t;
 
+cco_object_t* parse_expr(cco_parser_context_t* ctx);
 cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx, cco_src_loc_t* out_err_loc);
 
 cco_object_t* cco_parse_function(cco_parser_context_t* ctx);
