@@ -41,7 +41,7 @@ static inline void* cco_fast_alloc(size_t size) {
     if (size <= 16 && g_str_pool_16_count > 0) return g_str_pool_16[--g_str_pool_16_count];
     if (size == 32 && g_pool_32_count > 0) return g_pool_32[--g_pool_32_count];
     if (size == 64 && g_pool_64_count > 0) return g_pool_64[--g_pool_64_count];
-    return malloc(size);
+    return malloc(size <= 16 ? 16 : size);
 }
 
 static inline void cco_fast_free(void* ptr, size_t size) {
