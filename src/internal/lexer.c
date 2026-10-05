@@ -20,19 +20,20 @@ void cco_lexer_init(cco_lexer_t* lexer, const char* src, size_t src_len,
     }
 }
 
-static int peek(cco_lexer_t* lexer)
+static inline int peek(cco_lexer_t* lexer)
 {
     if (lexer->pos >= lexer->src_len)
         return -1;
     return lexer->src[lexer->pos];
 }
 
-static int advance(cco_lexer_t* lexer)
+static inline int advance(cco_lexer_t* lexer)
 {
     int c = peek(lexer);
     if (c != -1)
     {
         lexer->pos++;
+#ifndef CCO_ENABLE_FAST
         if (c == '\n')
         {
             lexer->line++;
@@ -42,12 +43,28 @@ static int advance(cco_lexer_t* lexer)
         {
             lexer->col++;
         }
+#endif
     }
     return c;
 }
 
 static cco_error_t skip_whitespace(cco_lexer_t* lexer)
 {
+#ifdef CCO_ENABLE_FAST
+    const char* src = lexer->src;
+    size_t len = lexer->src_len;
+    size_t pos = lexer->pos;
+    while (pos < len)
+    {
+        char c = src[pos];
+        if (c == ' ' || c == '\t' || c == '\r' || c == '\n')
+            pos++;
+        else
+            break;
+    }
+    lexer->pos = pos;
+#endif
+
     while (1)
     {
         int c = peek(lexer);
@@ -89,10 +106,49 @@ static cco_error_t skip_whitespace(cco_lexer_t* lexer)
 
 static cco_error_t parse_string(cco_lexer_t* lexer, cco_token_t* out_token)
 {
-    /* simplified string parser */
     size_t start_col = lexer->col;
     size_t start_line = lexer->line;
     advance(lexer); /* skip " */
+
+    size_t start_pos = lexer->pos;
+    bool has_escape = false;
+
+    /* Fast scan */
+    while (lexer->pos < lexer->src_len) {
+        char c = lexer->src[lexer->pos];
+        if (c == '"') break;
+        if (c == '\\') {
+            has_escape = true;
+            break;
+        }
+        lexer->pos++;
+    }
+
+    if (lexer->pos >= lexer->src_len) {
+        cco_diag_record(CCO_ERR_PARSE, start_line, start_col, "parse_string",
+                        "Unterminated string literal");
+        return CCO_ERR_PARSE;
+    }
+
+    if (!has_escape) {
+#ifndef CCO_ENABLE_FAST
+        lexer->col += (lexer->pos - start_pos);
+#endif
+        out_token->type = CCO_TOK_STRING;
+        out_token->text_ptr = lexer->src + start_pos;
+        out_token->text_len = lexer->pos - start_pos;
+        lexer->pos++; /* skip " */
+#ifndef CCO_ENABLE_FAST
+        lexer->col++;
+#endif
+        return CCO_OK;
+    }
+
+    /* Rewind and parse slowly with escapes */
+    lexer->pos = start_pos;
+#ifndef CCO_ENABLE_FAST
+    lexer->col = start_col + 1;
+#endif
 
     lexer->scratch_buf.length = 0; /* reset */
 

@@ -1286,6 +1286,35 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
     case CCO_TOK_STRING: {
         const char* s_data = ctx->current_token.text_ptr;
         size_t s_len = ctx->current_token.text_len;
+
+#ifdef CCO_ENABLE_FAST
+        /* In fast mode, bypass interpolation entirely or use fast memchr */
+        if (memchr(s_data, '$', s_len) == NULL) {
+            cco_object_t* obj = cco_object_create(CCO_TYPE_STRING);
+            if (obj) {
+                obj->as.string.data = (char*)s_data; // zero-copy pointer directly into src
+                obj->as.string.length = s_len;
+            }
+            advance_token(ctx);
+            return obj;
+        }
+#else
+        if (memchr(s_data, '$', s_len) == NULL) {
+            cco_object_t* obj = cco_object_create(CCO_TYPE_STRING);
+            if (obj) {
+                char* dup = malloc(s_len + 1);
+                if (dup) {
+                    memcpy(dup, s_data, s_len);
+                    dup[s_len] = '\0';
+                    obj->as.string.data = dup;
+                    obj->as.string.length = s_len;
+                }
+            }
+            advance_token(ctx);
+            return obj;
+        }
+#endif
+
         cco_strbuf_t sb;
         cco_strbuf_init(&sb, ctx->arena);
         
@@ -1342,8 +1371,11 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                 }
                 cco_object_release(expr_val);
             } else {
-                cco_strbuf_append(&sb, &s_data[i], 1);
-                i++;
+                size_t start = i;
+                while (i < s_len && s_data[i] != '$') {
+                    i++;
+                }
+                cco_strbuf_append(&sb, &s_data[start], i - start);
             }
         }
         
