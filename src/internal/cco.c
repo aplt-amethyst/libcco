@@ -40,6 +40,12 @@ void cco_parse_options_init(cco_parse_options_t* opts)
 #ifdef CCO_ENABLE_CONSTRUCTORS
     opts->allow_constructors = true;
 #endif
+#ifdef CCO_ENABLE_STRICT_SAFETY
+    opts->strict_safety_parsing = false;
+#endif
+#ifdef CCO_ENABLE_INCLUDE
+    opts->allow_include = true;
+#endif
 }
 
 cco_object_t* cco_parse_string(const char* src, size_t len,

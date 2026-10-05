@@ -47,6 +47,14 @@ typedef struct
     bool allow_constructors;
 #endif
 
+#ifdef CCO_ENABLE_STRICT_SAFETY
+    bool strict_safety_parsing;
+#endif
+
+#ifdef CCO_ENABLE_INCLUDE
+    bool allow_include;
+#endif
+
 } cco_parse_options_t;
 
 /* Initializes options with default values */

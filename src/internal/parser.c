@@ -526,32 +526,37 @@ static int get_binary_op_precedence(cco_token_type_t type) {
     switch (type) {
         case CCO_TOK_STAR:
         case CCO_TOK_SLASH:
-            return 11;
+            return 12;
         case CCO_TOK_PLUS:
         case CCO_TOK_MINUS:
-            return 10;
+            return 11;
         case CCO_TOK_LSHIFT:
         case CCO_TOK_RSHIFT:
-            return 9;
+            return 10;
         case CCO_TOK_LT:
         case CCO_TOK_LTE:
         case CCO_TOK_GT:
         case CCO_TOK_GTE:
-            return 8;
+            return 9;
         case CCO_TOK_EQEQ:
         case CCO_TOK_NEQ:
-            return 7;
+            return 8;
         case CCO_TOK_AMPERSAND:
-            return 6;
+            return 8;
         case CCO_TOK_CARET:
-            return 5;
+            return 7;
         case CCO_TOK_PIPE:
-            return 4;
+            return 6;
+        case CCO_TOK_DOTDOT:
+        case CCO_TOK_DOTDOTEQ:
+            return 5;
         case CCO_TOK_AND:
-            return 3;
+            return 4;
         case CCO_TOK_OR:
-            return 2;
+            return 3;
         case CCO_TOK_QQ:
+            return 2;
+        case CCO_TOK_QMARK:
             return 1;
         default:
             return 0;
@@ -610,7 +615,64 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
             return NULL;
         }
         
-        if (op == CCO_TOK_QQ) {
+                if (op == CCO_TOK_QMARK) {
+            cco_object_t* mid = right;
+            if (ctx->current_token.type != CCO_TOK_COLON) {
+                cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_expr", "expected ':' for ternary operator");
+                ctx->last_error = CCO_ERR_PARSE;
+                cco_object_release(left); cco_object_release(mid);
+                return NULL;
+            }
+            advance_token(ctx);
+            right = parse_expr_inner(ctx, 1);
+            if (!right) {
+                cco_object_release(left); cco_object_release(mid);
+                return NULL;
+            }
+            bool l_truthy = false;
+            if (left->type == CCO_TYPE_BOOLEAN) l_truthy = left->as.boolean;
+            else if (left->type == CCO_TYPE_INTEGER) l_truthy = (left->as.integer != 0);
+            else if (left->type == CCO_TYPE_FLOAT) l_truthy = (left->as.floating != 0.0);
+            else if (left->type == CCO_TYPE_STRING) l_truthy = (left->as.string.length > 0);
+            
+            cco_object_release(left);
+            if (l_truthy) {
+                cco_object_release(right);
+                left = mid;
+            } else {
+                cco_object_release(mid);
+                left = right;
+            }
+            continue;
+        } else if (op == CCO_TOK_DOTDOT || op == CCO_TOK_DOTDOTEQ) {
+            if (left->type == CCO_TYPE_INTEGER && right->type == CCO_TYPE_INTEGER) {
+                long long start = left->as.integer;
+                long long end = right->as.integer;
+                if (op == CCO_TOK_DOTDOTEQ) end++;
+                
+                cco_object_t* arr = cco_object_create(CCO_TYPE_ARRAY);
+                if (arr) {
+                    for (long long i = start; i < end; i++) {
+                        cco_object_t* num = cco_object_create(CCO_TYPE_INTEGER);
+                        if (num) {
+                            num->as.integer = i;
+                            cco_array_append(arr, num);
+                            cco_object_release(num);
+                        }
+                    }
+                }
+                cco_object_release(left);
+                cco_object_release(right);
+                left = arr;
+                continue;
+            } else {
+                cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_expr", "range limits must be integers");
+                ctx->last_error = CCO_ERR_PARSE;
+                cco_object_release(left); cco_object_release(right);
+                return NULL;
+            }
+        }
+        else if (op == CCO_TOK_QQ) {
             if (left->type == CCO_TYPE_NONE) {
                 cco_object_release(left);
                 left = right;
@@ -801,15 +863,97 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         return obj;
     }
     
+    if (ctx->current_token.type == CCO_TOK_IDENTIFIER && ctx->current_token.text_len == 4 && strncmp(ctx->current_token.text_ptr, "$env", 4) == 0) {
+        if (ctx->next_token.type == CCO_TOK_LPAREN) {
+            advance_token(ctx);
+            advance_token(ctx);
+            if (ctx->current_token.type == CCO_TOK_STRING) {
+                char env_name[256];
+                size_t cpy_len = ctx->current_token.text_len < 255 ? ctx->current_token.text_len : 255;
+                memcpy(env_name, ctx->current_token.text_ptr, cpy_len);
+                env_name[cpy_len] = '\0';
+                advance_token(ctx);
+                if (ctx->current_token.type == CCO_TOK_RPAREN) advance_token(ctx);
+                
+#ifdef CCO_ENABLE_ENV
+                if (ctx->options->allow_env_builtin) {
+                    const char* env_val = getenv(env_name);
+                    if (env_val) {
+                        cco_object_t* str_obj = cco_object_create(CCO_TYPE_STRING);
+                        if (str_obj) {
+                            size_t elen = strlen(env_val);
+                            char* dup = cco_arena_alloc(ctx->arena, elen + 1);
+                            if (dup) {
+                                memcpy(dup, env_val, elen);
+                                dup[elen] = '\0';
+                                str_obj->as.string.data = dup;
+                                str_obj->as.string.length = elen;
+                                return str_obj;
+                            }
+                            cco_object_release(str_obj);
+                        }
+                    }
+                }
+#endif
+                return cco_object_create(CCO_TYPE_NONE);
+            }
+        }
+    }
     if (ctx->current_token.type == CCO_TOK_IDENTIFIER && ctx->current_token.text_len == 8 && strncmp(ctx->current_token.text_ptr, "$include", 8) == 0) {
         if (ctx->next_token.type == CCO_TOK_LPAREN) {
             advance_token(ctx); /* Skip $include */
             advance_token(ctx); /* Skip ( */
             if (ctx->current_token.type == CCO_TOK_STRING) {
-                /* We mock $include by just creating a dummy map for now, since full IO macro is too long for this script */
+                char filename[256];
+                size_t cpy_len = ctx->current_token.text_len < 255 ? ctx->current_token.text_len : 255;
+                memcpy(filename, ctx->current_token.text_ptr, cpy_len);
+                filename[cpy_len] = '\0';
                 advance_token(ctx); /* skip string */
                 if (ctx->current_token.type == CCO_TOK_RPAREN) advance_token(ctx);
-                return cco_object_create(CCO_TYPE_MAP);
+                
+                if (ctx->options && ctx->options->restrict_filesystem) {
+                    if (strstr(filename, "..") || filename[0] == '/') {
+                        cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "directory traversal not allowed");
+                        ctx->last_error = CCO_ERR_PARSE;
+                        return NULL;
+                    }
+                }
+                
+                char filepath[1024];
+                if (ctx->options && ctx->options->base_dir) {
+                    snprintf(filepath, sizeof(filepath), "%s/%s", ctx->options->base_dir, filename);
+                } else {
+                    snprintf(filepath, sizeof(filepath), "%s", filename);
+                }
+                
+                FILE* f = fopen(filepath, "rb");
+                if (!f) {
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "failed to open included file");
+                    ctx->last_error = CCO_ERR_PARSE;
+                    return NULL;
+                }
+                fseek(f, 0, SEEK_END);
+                long fsize = ftell(f);
+                fseek(f, 0, SEEK_SET);
+                
+                char* fcontent = malloc(fsize + 1);
+                if (!fcontent) {
+                    fclose(f);
+                    ctx->last_error = CCO_ERR_NO_MEMORY;
+                    return NULL;
+                }
+                fread(fcontent, 1, fsize, f);
+                fcontent[fsize] = '\0';
+                fclose(f);
+                
+                cco_object_t* file_obj = cco_parse_string(fcontent, fsize, ctx->options);
+                free(fcontent);
+                
+                if (!file_obj) {
+                    ctx->last_error = CCO_ERR_PARSE;
+                    return NULL;
+                }
+                return file_obj;
             }
         }
     }
@@ -1148,7 +1292,9 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         size_t i = 0;
         bool has_error = false;
         while (i < s_len) {
-            if (s_data[i] == '$' && i + 1 < s_len && s_data[i+1] == '(') {
+            if (s_data[i] == '$' && i + 1 < s_len && (s_data[i+1] == '(' || s_data[i+1] == '{')) {
+                
+                cco_token_type_t close_tok = (s_data[i+1] == '(') ? CCO_TOK_RPAREN : CCO_TOK_RBRACE;
                 i += 2;
                 cco_parser_context_t sub_ctx;
                 cco_parser_init(&sub_ctx, s_data + i, s_len - i, ctx->options, ctx->arena);
@@ -1160,8 +1306,8 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                     has_error = true;
                     break;
                 }
-                if (sub_ctx.current_token.type != CCO_TOK_RPAREN) {
-                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "expected ')' after interpolation");
+                if (sub_ctx.current_token.type != close_tok) {
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "expected closing token after interpolation");
                     ctx->last_error = CCO_ERR_PARSE;
                     cco_object_release(expr_val);
                     has_error = true;
@@ -1232,6 +1378,11 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         else if (ctx->current_token.type == CCO_TOK_RPAREN)
         {
             result = parse_map(ctx);
+        }
+        else if (ctx->current_token.type == CCO_TOK_COMMA && ctx->next_token.type == CCO_TOK_RPAREN)
+        {
+            advance_token(ctx);
+            result = cco_object_create(CCO_TYPE_ARRAY);
         }
         else
         {
