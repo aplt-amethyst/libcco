@@ -1063,26 +1063,89 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         }
         advance_token(ctx);
         break;
-    case CCO_TOK_STRING:
-        result = cco_object_create(CCO_TYPE_STRING);
-        if (result)
-        {
-            size_t slen = ctx->current_token.text_len;
-            char* sdup = malloc(slen + 1);
-            if (sdup)
-            {
-                memcpy(sdup, ctx->current_token.text_ptr, slen);
-                sdup[slen] = '\0';
-                result->as.string.data = sdup;
-                result->as.string.length = slen;
+    case CCO_TOK_STRING: {
+        const char* s_data = ctx->current_token.text_ptr;
+        size_t s_len = ctx->current_token.text_len;
+        cco_strbuf_t sb;
+        cco_strbuf_init(&sb, ctx->arena);
+        
+        size_t i = 0;
+        bool has_error = false;
+        while (i < s_len) {
+            if (s_data[i] == '$' && i + 1 < s_len && s_data[i+1] == '(') {
+                i += 2;
+                cco_parser_context_t sub_ctx;
+                cco_parser_init(&sub_ctx, s_data + i, s_len - i, ctx->options, ctx->arena);
+                sub_ctx.scope = ctx->scope;
+                
+                cco_object_t* expr_val = parse_expr(&sub_ctx);
+                if (!expr_val) {
+                    ctx->last_error = sub_ctx.last_error;
+                    has_error = true;
+                    break;
+                }
+                if (sub_ctx.current_token.type != CCO_TOK_RPAREN) {
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "expected ')' after interpolation");
+                    ctx->last_error = CCO_ERR_PARSE;
+                    cco_object_release(expr_val);
+                    has_error = true;
+                    break;
+                }
+                
+                i += (sub_ctx.current_token.text_ptr - (s_data + i)) + sub_ctx.current_token.text_len;
+                
+                if (expr_val->type == CCO_TYPE_STRING) {
+                    cco_strbuf_append(&sb, expr_val->as.string.data, expr_val->as.string.length);
+                } else if (expr_val->type == CCO_TYPE_INTEGER) {
+                    char buf[64];
+                    int n = snprintf(buf, sizeof(buf), "%lld", (long long)expr_val->as.integer);
+                    cco_strbuf_append(&sb, buf, n);
+                } else if (expr_val->type == CCO_TYPE_FLOAT) {
+                    char buf[64];
+                    int n = snprintf(buf, sizeof(buf), "%g", expr_val->as.floating);
+                    cco_strbuf_append(&sb, buf, n);
+                } else if (expr_val->type == CCO_TYPE_BOOLEAN) {
+                    if (expr_val->as.boolean) cco_strbuf_append(&sb, "true", 4);
+                    else cco_strbuf_append(&sb, "false", 5);
+                } else if (expr_val->type == CCO_TYPE_NONE) {
+                    cco_strbuf_append(&sb, "none", 4);
+                } else if (expr_val->type == CCO_TYPE_PARAM) {
+                    char msg[128];
+                    snprintf(msg, sizeof(msg), "parameter '%s' cannot be interpolated at parse time", expr_val->as.param.name);
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", msg);
+                    ctx->last_error = CCO_ERR_PARSE;
+                    cco_object_release(expr_val);
+                    has_error = true;
+                    break;
+                }
+                cco_object_release(expr_val);
+            } else {
+                cco_strbuf_append(&sb, &s_data[i], 1);
+                i++;
             }
-            else
-            {
+        }
+        
+        if (!has_error) {
+            result = cco_object_create(CCO_TYPE_STRING);
+            if (result) {
+                char* sdup = malloc(sb.length + 1);
+                if (sdup) {
+                    memcpy(sdup, sb.data, sb.length);
+                    sdup[sb.length] = '\0';
+                    result->as.string.data = sdup;
+                    result->as.string.length = sb.length;
+                } else {
+                    ctx->last_error = CCO_ERR_NO_MEMORY;
+                    cco_object_release(result);
+                    result = NULL;
+                }
+            } else {
                 ctx->last_error = CCO_ERR_NO_MEMORY;
             }
         }
         advance_token(ctx);
         break;
+    }
     case CCO_TOK_LPAREN:
         advance_token(ctx);
         if (ctx->current_token.type == CCO_TOK_IDENTIFIER &&

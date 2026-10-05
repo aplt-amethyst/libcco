@@ -1434,6 +1434,28 @@ static void test_expr_string_concat(void) {
     cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
 }
 
+static void test_string_interpolation(void) {
+    tests_run++;
+    cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_scope_t root; cco_scope_init(&root, NULL);
+    
+    cco_object_t* name_val = cco_object_create(CCO_TYPE_STRING);
+    const char* n = "World";
+    name_val->as.string.data = strdup(n);
+    name_val->as.string.length = strlen(n);
+    cco_scope_bind(&root, "name", name_val);
+    
+    cco_parser_init(&ctx, "x: String = \"Hello $(name)! 10 + 20 is $(10 + 20).\"", strlen("x: String = \"Hello $(name)! 10 + 20 is $(10 + 20).\""), &opts, &arena);
+    ctx.scope = &root; cco_src_loc_t loc = {0};
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    cco_object_t* val = cco_scope_lookup(&root, "x");
+    assert(val != NULL); assert(val->type == CCO_TYPE_STRING); 
+    assert(strcmp(val->as.string.data, "Hello World! 10 + 20 is 30.") == 0);
+    
+    cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
+}
+
 void test_scope_all(void) {
     test_scope_basic();
     test_parse_bind_ok();
@@ -1502,4 +1524,5 @@ void test_scope_all(void) {
     test_expr_comparison();
     test_expr_logical();
     test_expr_string_concat();
+    test_string_interpolation();
 }
