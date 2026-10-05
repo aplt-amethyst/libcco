@@ -27,6 +27,7 @@ typedef struct
      */
     char** keys;
     cco_object_t** values;
+    uint32_t* hashes;
     size_t count;
     size_t capacity;
 } cco_map_t;
