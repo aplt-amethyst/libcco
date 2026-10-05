@@ -499,9 +499,21 @@ static int get_binary_op_precedence(cco_token_type_t type) {
     switch (type) {
         case CCO_TOK_STAR:
         case CCO_TOK_SLASH:
-            return 2;
+            return 6;
         case CCO_TOK_PLUS:
         case CCO_TOK_MINUS:
+            return 5;
+        case CCO_TOK_LT:
+        case CCO_TOK_LTE:
+        case CCO_TOK_GT:
+        case CCO_TOK_GTE:
+            return 4;
+        case CCO_TOK_EQEQ:
+        case CCO_TOK_NEQ:
+            return 3;
+        case CCO_TOK_AND:
+            return 2;
+        case CCO_TOK_OR:
             return 1;
         default:
             return 0;
@@ -559,25 +571,39 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
             cco_object_release(left); cco_object_release(right);
             return NULL;
         }
+        
         if (left->type == CCO_TYPE_INTEGER && right->type == CCO_TYPE_INTEGER) {
             int64_t l = left->as.integer;
             int64_t r = right->as.integer;
             cco_object_release(left);
             cco_object_release(right);
-            left = cco_object_create(CCO_TYPE_INTEGER);
-            if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
-            if (op == CCO_TOK_PLUS) left->as.integer = l + r;
-            else if (op == CCO_TOK_MINUS) left->as.integer = l - r;
-            else if (op == CCO_TOK_STAR) left->as.integer = l * r;
-            else if (op == CCO_TOK_SLASH) {
-                if (r == 0) {
-                    cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_expr", "division by zero");
-                    ctx->last_error = CCO_ERR_PARSE;
-                    cco_object_release(left);
-                    return NULL;
+            
+            if (op == CCO_TOK_PLUS || op == CCO_TOK_MINUS || op == CCO_TOK_STAR || op == CCO_TOK_SLASH) {
+                left = cco_object_create(CCO_TYPE_INTEGER);
+                if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
+                if (op == CCO_TOK_PLUS) left->as.integer = l + r;
+                else if (op == CCO_TOK_MINUS) left->as.integer = l - r;
+                else if (op == CCO_TOK_STAR) left->as.integer = l * r;
+                else if (op == CCO_TOK_SLASH) {
+                    if (r == 0) {
+                        cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_expr", "division by zero");
+                        ctx->last_error = CCO_ERR_PARSE;
+                        cco_object_release(left);
+                        return NULL;
+                    }
+                    left->as.integer = l / r;
                 }
-                /* TODO: guard INT64_MIN / -1 */
-                left->as.integer = l / r; /* Integer truncation */
+            } else if (op == CCO_TOK_EQEQ || op == CCO_TOK_NEQ || op == CCO_TOK_LT || op == CCO_TOK_LTE || op == CCO_TOK_GT || op == CCO_TOK_GTE) {
+                left = cco_object_create(CCO_TYPE_BOOLEAN);
+                if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
+                if (op == CCO_TOK_EQEQ) left->as.boolean = (l == r);
+                else if (op == CCO_TOK_NEQ) left->as.boolean = (l != r);
+                else if (op == CCO_TOK_LT) left->as.boolean = (l < r);
+                else if (op == CCO_TOK_LTE) left->as.boolean = (l <= r);
+                else if (op == CCO_TOK_GT) left->as.boolean = (l > r);
+                else if (op == CCO_TOK_GTE) left->as.boolean = (l >= r);
+            } else {
+                goto op_error;
             }
         } else if ((left->type == CCO_TYPE_INTEGER || left->type == CCO_TYPE_FLOAT) &&
                    (right->type == CCO_TYPE_INTEGER || right->type == CCO_TYPE_FLOAT)) {
@@ -585,22 +611,108 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
             double r = (right->type == CCO_TYPE_INTEGER) ? (double)right->as.integer : right->as.floating;
             cco_object_release(left);
             cco_object_release(right);
-            left = cco_object_create(CCO_TYPE_FLOAT);
-            if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
-            if (op == CCO_TOK_PLUS) left->as.floating = l + r;
-            else if (op == CCO_TOK_MINUS) left->as.floating = l - r;
-            else if (op == CCO_TOK_STAR) left->as.floating = l * r;
-            else if (op == CCO_TOK_SLASH) {
-                if (r == 0.0) {
-                    cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_expr", "division by zero");
-                    ctx->last_error = CCO_ERR_PARSE;
-                    cco_object_release(left);
-                    return NULL;
+            
+            if (op == CCO_TOK_PLUS || op == CCO_TOK_MINUS || op == CCO_TOK_STAR || op == CCO_TOK_SLASH) {
+                left = cco_object_create(CCO_TYPE_FLOAT);
+                if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
+                if (op == CCO_TOK_PLUS) left->as.floating = l + r;
+                else if (op == CCO_TOK_MINUS) left->as.floating = l - r;
+                else if (op == CCO_TOK_STAR) left->as.floating = l * r;
+                else if (op == CCO_TOK_SLASH) {
+                    if (r == 0.0) {
+                        cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_expr", "division by zero");
+                        ctx->last_error = CCO_ERR_PARSE;
+                        cco_object_release(left);
+                        return NULL;
+                    }
+                    left->as.floating = l / r;
                 }
-                left->as.floating = l / r;
+            } else if (op == CCO_TOK_EQEQ || op == CCO_TOK_NEQ || op == CCO_TOK_LT || op == CCO_TOK_LTE || op == CCO_TOK_GT || op == CCO_TOK_GTE) {
+                left = cco_object_create(CCO_TYPE_BOOLEAN);
+                if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
+                if (op == CCO_TOK_EQEQ) left->as.boolean = (l == r);
+                else if (op == CCO_TOK_NEQ) left->as.boolean = (l != r);
+                else if (op == CCO_TOK_LT) left->as.boolean = (l < r);
+                else if (op == CCO_TOK_LTE) left->as.boolean = (l <= r);
+                else if (op == CCO_TOK_GT) left->as.boolean = (l > r);
+                else if (op == CCO_TOK_GTE) left->as.boolean = (l >= r);
+            } else {
+                goto op_error;
             }
+        } else if (op == CCO_TOK_AND || op == CCO_TOK_OR) {
+            // Logic operators
+            bool l_truthy = false;
+            bool r_truthy = false;
+            
+            if (left->type == CCO_TYPE_BOOLEAN) l_truthy = left->as.boolean;
+            else if (left->type == CCO_TYPE_INTEGER) l_truthy = (left->as.integer != 0);
+            else if (left->type == CCO_TYPE_FLOAT) l_truthy = (left->as.floating != 0.0);
+            else if (left->type == CCO_TYPE_STRING) l_truthy = (left->as.string.length > 0);
+            
+            if (right->type == CCO_TYPE_BOOLEAN) r_truthy = right->as.boolean;
+            else if (right->type == CCO_TYPE_INTEGER) r_truthy = (right->as.integer != 0);
+            else if (right->type == CCO_TYPE_FLOAT) r_truthy = (right->as.floating != 0.0);
+            else if (right->type == CCO_TYPE_STRING) r_truthy = (right->as.string.length > 0);
+            
+            cco_object_release(left);
+            cco_object_release(right);
+            left = cco_object_create(CCO_TYPE_BOOLEAN);
+            if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
+            
+            if (op == CCO_TOK_AND) left->as.boolean = (l_truthy && r_truthy);
+            else left->as.boolean = (l_truthy || r_truthy);
+        } else if (left->type == CCO_TYPE_STRING && right->type == CCO_TYPE_STRING && op == CCO_TOK_PLUS) {
+            // String concatenation
+            size_t new_len = left->as.string.length + right->as.string.length;
+            char* new_str = malloc(new_len + 1);
+            if (!new_str) {
+                cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory");
+                ctx->last_error = CCO_ERR_NO_MEMORY;
+                cco_object_release(left); cco_object_release(right);
+                return NULL;
+            }
+            memcpy(new_str, left->as.string.data, left->as.string.length);
+            memcpy(new_str + left->as.string.length, right->as.string.data, right->as.string.length);
+            new_str[new_len] = '\0';
+            
+            cco_object_release(left);
+            cco_object_release(right);
+            left = cco_object_create(CCO_TYPE_STRING);
+            if (!left) { free(new_str); cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
+            left->as.string.data = new_str;
+            left->as.string.length = new_len;
+        } else if ((op == CCO_TOK_EQEQ || op == CCO_TOK_NEQ) && left->type == right->type) {
+            bool eq = false;
+            if (left->type == CCO_TYPE_STRING) {
+                eq = (left->as.string.length == right->as.string.length) &&
+                     (memcmp(left->as.string.data, right->as.string.data, left->as.string.length) == 0);
+            } else if (left->type == CCO_TYPE_BOOLEAN) {
+                eq = (left->as.boolean == right->as.boolean);
+            } else if (left->type == CCO_TYPE_NONE) {
+                eq = true;
+            }
+            cco_object_release(left);
+            cco_object_release(right);
+            left = cco_object_create(CCO_TYPE_BOOLEAN);
+            if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
+            left->as.boolean = (op == CCO_TOK_EQEQ) ? eq : !eq;
         } else {
-            const char* op_str = (op == CCO_TOK_PLUS) ? "+" : (op == CCO_TOK_MINUS) ? "-" : (op == CCO_TOK_STAR) ? "*" : "/";
+        op_error:
+            ; // empty statement for label
+            const char* op_str = "";
+            if (op == CCO_TOK_PLUS) op_str = "+";
+            else if (op == CCO_TOK_MINUS) op_str = "-";
+            else if (op == CCO_TOK_STAR) op_str = "*";
+            else if (op == CCO_TOK_SLASH) op_str = "/";
+            else if (op == CCO_TOK_EQEQ) op_str = "==";
+            else if (op == CCO_TOK_NEQ) op_str = "!=";
+            else if (op == CCO_TOK_LT) op_str = "<";
+            else if (op == CCO_TOK_LTE) op_str = "<=";
+            else if (op == CCO_TOK_GT) op_str = ">";
+            else if (op == CCO_TOK_GTE) op_str = ">=";
+            else if (op == CCO_TOK_AND) op_str = "&&";
+            else if (op == CCO_TOK_OR) op_str = "||";
+            
             const char* ltype = cco_type_name(left->type);
             const char* rtype = cco_type_name(right->type);
             

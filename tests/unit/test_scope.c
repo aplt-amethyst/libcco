@@ -1389,6 +1389,51 @@ static void test_template_unknown_parent(void) {
     free(def->fields); free((void*)def->parent_name); free(def); free(symtab.templates.entries); cco_intern_table_destroy(&symtab.aliases); cco_arena_destroy(&arena); tests_passed++;
 }
 
+static void test_expr_comparison(void) {
+    tests_run++;
+    cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_scope_t root; cco_scope_init(&root, NULL);
+    
+    cco_parser_init(&ctx, "x: Boolean = $(10 < 20)", strlen("x: Boolean = $(10 < 20)"), &opts, &arena);
+    ctx.scope = &root; cco_src_loc_t loc = {0};
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    cco_object_t* val = cco_scope_lookup(&root, "x");
+    assert(val != NULL); assert(val->type == CCO_TYPE_BOOLEAN); assert(val->as.boolean == true);
+    
+    cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_expr_logical(void) {
+    tests_run++;
+    cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_scope_t root; cco_scope_init(&root, NULL);
+    
+    cco_parser_init(&ctx, "x: Boolean = $(true && false)", strlen("x: Boolean = $(true && false)"), &opts, &arena);
+    ctx.scope = &root; cco_src_loc_t loc = {0};
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    cco_object_t* val = cco_scope_lookup(&root, "x");
+    assert(val != NULL); assert(val->type == CCO_TYPE_BOOLEAN); assert(val->as.boolean == false);
+    
+    cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_expr_string_concat(void) {
+    tests_run++;
+    cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_scope_t root; cco_scope_init(&root, NULL);
+    
+    cco_parser_init(&ctx, "x: String = $(\"hello\" + \" world\")", strlen("x: String = $(\"hello\" + \" world\")"), &opts, &arena);
+    ctx.scope = &root; cco_src_loc_t loc = {0};
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    cco_object_t* val = cco_scope_lookup(&root, "x");
+    assert(val != NULL); assert(val->type == CCO_TYPE_STRING); assert(strcmp(val->as.string.data, "hello world") == 0);
+    
+    cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
+}
+
 void test_scope_all(void) {
     test_scope_basic();
     test_parse_bind_ok();
@@ -1454,5 +1499,7 @@ void test_scope_all(void) {
     test_tmpl_inst_inherit_pos();
     test_tmpl_inst_colon();
     test_tmpl_inst_type_fail();
-    test_symtab_leak();
+    test_expr_comparison();
+    test_expr_logical();
+    test_expr_string_concat();
 }
