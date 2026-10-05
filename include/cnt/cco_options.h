@@ -59,6 +59,10 @@ typedef struct
 #ifdef CCO_ENABLE_FAST
     bool fast_mode; /* Bypasses duplicate checks and hashes for extreme DOM parsing */
 #endif
+
+#ifdef CCO_ENABLE_ZERO_COPY
+    bool zero_copy_dom;
+#endif
 } cco_parse_options_t;
 
 /* Initializes options with default values */

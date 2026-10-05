@@ -8,7 +8,8 @@
 #include <cnt/cco.h>
 #include <cnt/cco_error.h>
 
-typedef int cco_type_t; /* enum deleted */
+typedef uint16_t cco_type_t;
+struct cco_arena_s; /* enum deleted */
 
 typedef struct cco_object_s cco_object_t;
 
@@ -39,13 +40,16 @@ typedef struct
     cco_map_t fields;
 } cco_template_instance_t;
 
+
 struct cco_object_s
 {
-    cco_type_t type;
-    size_t refcount; /* Non-atomic reference counting */
-
+    uint16_t type;
+    uint16_t flags;
+    uint32_t refcount;
+    struct cco_arena_s* dom_arena;
     union
     {
+
         bool boolean;
         int64_t integer;
         double floating;

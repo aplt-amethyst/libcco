@@ -28,6 +28,9 @@ void cco_parse_options_init(cco_parse_options_t* opts)
 #ifdef CCO_ENABLE_FAST
     opts->fast_mode = true;
 #endif
+#ifdef CCO_ENABLE_ZERO_COPY
+    opts->zero_copy_dom = true;
+#endif
 #ifdef CCO_ENABLE_FORMAT
     opts->allow_format_builtin = true;
 #endif
@@ -66,16 +69,51 @@ cco_object_t* cco_parse_string(const char* src, size_t len,
 
     cco_diag_clear();
 
+    
+    cco_object_t* root = NULL;
+#ifdef CCO_ENABLE_ZERO_COPY
+    if (opts->zero_copy_dom) {
+        
+#ifdef _MSC_VER
+#define CCO_THREAD_LOCAL __declspec(thread)
+#elif defined(__GNUC__) || defined(__clang__)
+#define CCO_THREAD_LOCAL __thread
+#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#define CCO_THREAD_LOCAL _Thread_local
+#else
+#define CCO_THREAD_LOCAL
+#endif
+        extern CCO_THREAD_LOCAL cco_arena_t* g_active_dom_arena;
+        cco_parser_context_t ctx;
+
+        cco_arena_t* dom = malloc(sizeof(cco_arena_t));
+        cco_arena_init(dom, opts->max_total_allocation);
+        g_active_dom_arena = dom;
+        cco_parser_init(&ctx, src, len, opts, dom);
+        root = cco_parse_document(&ctx);
+        if (root) {
+            root->dom_arena = dom;
+            root->flags |= 1; // arena node
+        } else {
+            cco_arena_destroy(dom);
+            free(dom);
+        }
+        g_active_dom_arena = NULL;
+        return root;
+    }
+#endif
+
     cco_arena_t arena;
+
+    
     cco_arena_init(&arena, opts->max_total_allocation);
-
     cco_parser_context_t ctx;
+
     cco_parser_init(&ctx, src, len, opts, &arena);
-
-    cco_object_t* root = cco_parse_document(&ctx);
-
+    root = cco_parse_document(&ctx);
     cco_arena_destroy(&arena);
     return root;
+
 }
 
 char* cco_serialize_to_string(const cco_object_t* obj, bool pretty)
