@@ -1154,6 +1154,49 @@ static void test_tmpl_inst_inherit_pos(void) {
     cco_object_release(s); cco_symtab_destroy(&symtab); cco_arena_destroy(&arena); tests_passed++;
 }
 
+
+static void test_tmpl_inst_colon(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena); cco_diag_clear();
+    const char* src1 = "$temp.Point: (x: Integer, y: Integer)";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    cco_symtab_add_template(&symtab, "Point", cco_parse_template_decl(&ctx));
+    
+    const char* src2 = "#Point: (.x: 1, .y: 2)";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    ctx.symtab = &symtab;
+    cco_object_t* p = parse_expr(&ctx);
+    assert(p != NULL && p->type == CCO_TYPE_TEMPLATE_INSTANCE);
+    assert(ctx.last_error == CCO_OK);
+    cco_object_t* x = NULL;
+    for(size_t i=0; i<p->as.tmpl_inst.fields.count; ++i) {
+        if(strcmp(p->as.tmpl_inst.fields.keys[i], "x") == 0) x = p->as.tmpl_inst.fields.values[i];
+    }
+    assert(x && x->type == CCO_TYPE_INTEGER && x->as.integer == 1);
+    
+    cco_object_release(p); cco_symtab_destroy(&symtab); cco_arena_destroy(&arena); tests_passed++;
+}
+
+static void test_tmpl_inst_type_fail(void) {
+    tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena); cco_diag_clear();
+    const char* src1 = "$temp.Server: (host: String, port: Integer = 8080)";
+    cco_parser_init(&ctx, src1, strlen(src1), &opts, &arena);
+    cco_symtab_add_template(&symtab, "Server", cco_parse_template_decl(&ctx));
+    
+    const char* src2 = "#Server(1234)";
+    cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
+    ctx.symtab = &symtab;
+    cco_object_t* s = parse_expr(&ctx);
+    assert(s == NULL);
+    assert(ctx.last_error == CCO_ERR_PARSE);
+    size_t diag_count = 0;
+    const cco_diag_entry_t* diags = cco_diag_get_all(&diag_count);
+    assert(strstr(diags[diag_count - 1].message, "type mismatch for field 'host': expected 'String', got 'Integer'") != NULL);
+    
+    cco_symtab_destroy(&symtab); cco_arena_destroy(&arena); tests_passed++;
+}
+
 static void test_symtab_leak(void) {
     tests_run++; cco_parser_context_t ctx; cco_parse_options_t opts = {0};
     cco_arena_t arena; cco_arena_init(&arena, 1024); cco_symtab_t symtab; cco_symtab_init(&symtab, &arena);
@@ -1409,5 +1452,7 @@ void test_scope_all(void) {
     test_tmpl_inst_missing_nodef();
     test_tmpl_inst_mix();
     test_tmpl_inst_inherit_pos();
+    test_tmpl_inst_colon();
+    test_tmpl_inst_type_fail();
     test_symtab_leak();
 }

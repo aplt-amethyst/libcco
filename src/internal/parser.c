@@ -508,6 +508,20 @@ static int get_binary_op_precedence(cco_token_type_t type) {
     }
 }
 
+
+static bool check_field_type(cco_parser_context_t* ctx, cco_object_t* val, const char* expected_type, const char* field_name) {
+    if (!expected_type || val->type == CCO_TYPE_PARAM) return true;
+    const char* actual_type = cco_type_name(val->type);
+    if (strcmp(actual_type, expected_type) != 0) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "type mismatch for field '%s': expected '%s', got '%s'", field_name, expected_type, actual_type);
+        cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", msg);
+        ctx->last_error = CCO_ERR_PARSE;
+        return false;
+    }
+    return true;
+}
+
 static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
     cco_object_t* left = parse_value(ctx);
     if (!left) return NULL;
@@ -701,6 +715,10 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         tname[klen] = '\0';
         advance_token(ctx);
         
+        if (ctx->current_token.type == CCO_TOK_COLON) {
+            advance_token(ctx); /* skip : */
+        }
+        
         if (ctx->current_token.type != CCO_TOK_LPAREN) {
             free(tname);
             cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "expected '(' for template instantiation");
@@ -787,7 +805,11 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                 }
                 
                 provided[fidx] = true;
+                
                 /* Insert into map */
+                if (!check_field_type(ctx, val, def->fields[fidx].type_name, fname)) {
+                    free(fname); cco_object_release(val); break;
+                }
                 cco_tmpl_inst_insert(result, fname, val);
                 cco_object_release(val); /* map takes ownership/ref */
                 free(fname);
@@ -808,7 +830,11 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                 if (!val) { ctx->last_error = CCO_ERR_PARSE; break; }
                 
                 provided[pos_idx] = true;
+                
                 /* Insert into map */
+                if (!check_field_type(ctx, val, def->fields[pos_idx].type_name, def->fields[pos_idx].name)) {
+                    cco_object_release(val); break;
+                }
                 cco_tmpl_inst_insert(result, def->fields[pos_idx].name, val);
                 cco_object_release(val);
                 pos_idx++;
