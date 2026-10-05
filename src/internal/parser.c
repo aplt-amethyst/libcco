@@ -526,21 +526,32 @@ static int get_binary_op_precedence(cco_token_type_t type) {
     switch (type) {
         case CCO_TOK_STAR:
         case CCO_TOK_SLASH:
-            return 6;
+            return 11;
         case CCO_TOK_PLUS:
         case CCO_TOK_MINUS:
-            return 5;
+            return 10;
+        case CCO_TOK_LSHIFT:
+        case CCO_TOK_RSHIFT:
+            return 9;
         case CCO_TOK_LT:
         case CCO_TOK_LTE:
         case CCO_TOK_GT:
         case CCO_TOK_GTE:
-            return 4;
+            return 8;
         case CCO_TOK_EQEQ:
         case CCO_TOK_NEQ:
-            return 3;
+            return 7;
+        case CCO_TOK_AMPERSAND:
+            return 6;
+        case CCO_TOK_CARET:
+            return 5;
+        case CCO_TOK_PIPE:
+            return 4;
         case CCO_TOK_AND:
-            return 2;
+            return 3;
         case CCO_TOK_OR:
+            return 2;
+        case CCO_TOK_QQ:
             return 1;
         default:
             return 0;
@@ -599,13 +610,45 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
             return NULL;
         }
         
+        if (op == CCO_TOK_QQ) {
+            if (left->type == CCO_TYPE_NONE) {
+                cco_object_release(left);
+                left = right;
+            } else {
+                cco_object_release(right);
+            }
+            continue;
+        } else if (op == CCO_TOK_AND || op == CCO_TOK_OR) {
+            bool l_truthy = false;
+            bool r_truthy = false;
+            
+            if (left->type == CCO_TYPE_BOOLEAN) l_truthy = left->as.boolean;
+            else if (left->type == CCO_TYPE_INTEGER) l_truthy = (left->as.integer != 0);
+            else if (left->type == CCO_TYPE_FLOAT) l_truthy = (left->as.floating != 0.0);
+            else if (left->type == CCO_TYPE_STRING) l_truthy = (left->as.string.length > 0);
+            
+            if (right->type == CCO_TYPE_BOOLEAN) r_truthy = right->as.boolean;
+            else if (right->type == CCO_TYPE_INTEGER) r_truthy = (right->as.integer != 0);
+            else if (right->type == CCO_TYPE_FLOAT) r_truthy = (right->as.floating != 0.0);
+            else if (right->type == CCO_TYPE_STRING) r_truthy = (right->as.string.length > 0);
+            
+            cco_object_release(left);
+            cco_object_release(right);
+            left = cco_object_create(CCO_TYPE_BOOLEAN);
+            if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
+            if (op == CCO_TOK_AND) left->as.boolean = (l_truthy && r_truthy);
+            else left->as.boolean = (l_truthy || r_truthy);
+            continue;
+        }
+        
         if (left->type == CCO_TYPE_INTEGER && right->type == CCO_TYPE_INTEGER) {
             int64_t l = left->as.integer;
             int64_t r = right->as.integer;
             cco_object_release(left);
             cco_object_release(right);
             
-            if (op == CCO_TOK_PLUS || op == CCO_TOK_MINUS || op == CCO_TOK_STAR || op == CCO_TOK_SLASH) {
+            if (op == CCO_TOK_PLUS || op == CCO_TOK_MINUS || op == CCO_TOK_STAR || op == CCO_TOK_SLASH ||
+                op == CCO_TOK_LSHIFT || op == CCO_TOK_RSHIFT || op == CCO_TOK_AMPERSAND || op == CCO_TOK_CARET || op == CCO_TOK_PIPE) {
                 left = cco_object_create(CCO_TYPE_INTEGER);
                 if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
                 if (op == CCO_TOK_PLUS) left->as.integer = l + r;
@@ -620,6 +663,11 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
                     }
                     left->as.integer = l / r;
                 }
+                else if (op == CCO_TOK_LSHIFT) left->as.integer = l << r;
+                else if (op == CCO_TOK_RSHIFT) left->as.integer = l >> r;
+                else if (op == CCO_TOK_AMPERSAND) left->as.integer = l & r;
+                else if (op == CCO_TOK_CARET) left->as.integer = l ^ r;
+                else if (op == CCO_TOK_PIPE) left->as.integer = l | r;
             } else if (op == CCO_TOK_EQEQ || op == CCO_TOK_NEQ || op == CCO_TOK_LT || op == CCO_TOK_LTE || op == CCO_TOK_GT || op == CCO_TOK_GTE) {
                 left = cco_object_create(CCO_TYPE_BOOLEAN);
                 if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
@@ -666,28 +714,7 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
             } else {
                 goto op_error;
             }
-        } else if (op == CCO_TOK_AND || op == CCO_TOK_OR) {
-            // Logic operators
-            bool l_truthy = false;
-            bool r_truthy = false;
-            
-            if (left->type == CCO_TYPE_BOOLEAN) l_truthy = left->as.boolean;
-            else if (left->type == CCO_TYPE_INTEGER) l_truthy = (left->as.integer != 0);
-            else if (left->type == CCO_TYPE_FLOAT) l_truthy = (left->as.floating != 0.0);
-            else if (left->type == CCO_TYPE_STRING) l_truthy = (left->as.string.length > 0);
-            
-            if (right->type == CCO_TYPE_BOOLEAN) r_truthy = right->as.boolean;
-            else if (right->type == CCO_TYPE_INTEGER) r_truthy = (right->as.integer != 0);
-            else if (right->type == CCO_TYPE_FLOAT) r_truthy = (right->as.floating != 0.0);
-            else if (right->type == CCO_TYPE_STRING) r_truthy = (right->as.string.length > 0);
-            
-            cco_object_release(left);
-            cco_object_release(right);
-            left = cco_object_create(CCO_TYPE_BOOLEAN);
-            if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
-            
-            if (op == CCO_TOK_AND) left->as.boolean = (l_truthy && r_truthy);
-            else left->as.boolean = (l_truthy || r_truthy);
+        
         } else if (left->type == CCO_TYPE_STRING && right->type == CCO_TYPE_STRING && op == CCO_TOK_PLUS) {
             // String concatenation
             size_t new_len = left->as.string.length + right->as.string.length;
@@ -805,11 +832,13 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
     switch (ctx->current_token.type)
     {
     case CCO_TOK_MINUS:
+    case CCO_TOK_TILDE:
+    case CCO_TOK_NOT:
     {
-        /* TODO: handle parenthesized expression -(...) when implemented */
-        size_t minus_line = ctx->current_token.line;
-        size_t minus_col = ctx->current_token.col;
-        advance_token(ctx); /* skip - */
+        cco_token_type_t un_op = ctx->current_token.type;
+        size_t op_line = ctx->current_token.line;
+        size_t op_col = ctx->current_token.col;
+        advance_token(ctx);
         
         cco_object_t* inner = parse_value(ctx);
         if (!inner) {
@@ -817,27 +846,44 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
             break;
         }
         
-                if (inner->type == CCO_TYPE_PARAM) {
+        if (inner->type == CCO_TYPE_PARAM) {
             char msg[128];
             snprintf(msg, sizeof(msg), "parameter '%s' cannot be used in arithmetic at parse time", inner->as.param.name);
-            cco_diag_record(CCO_ERR_PARSE, minus_line, minus_col, "parse_value", msg);
+            cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_value", msg);
             ctx->last_error = CCO_ERR_PARSE;
             result = NULL;
-        } else if (inner->type == CCO_TYPE_INTEGER) {
-            result = cco_object_create(CCO_TYPE_INTEGER);
-            if (!result) { ctx->last_error = CCO_ERR_NO_MEMORY; cco_object_release(inner); break; }
-            result->as.integer = -inner->as.integer;
-        } else if (inner->type == CCO_TYPE_FLOAT) {
-            result = cco_object_create(CCO_TYPE_FLOAT);
-            if (!result) { ctx->last_error = CCO_ERR_NO_MEMORY; cco_object_release(inner); break; }
-            result->as.floating = -inner->as.floating;
-        } else {
-            char msg[256];
-            snprintf(msg, sizeof(msg), "unary minus not defined for %s", cco_type_name(inner->type));
-            cco_diag_record(CCO_ERR_PARSE, minus_line, minus_col, "parse_value", msg);
-            ctx->last_error = CCO_ERR_PARSE;
-            result = NULL;
+        } else if (un_op == CCO_TOK_MINUS) {
+            if (inner->type == CCO_TYPE_INTEGER) {
+                result = cco_object_create(CCO_TYPE_INTEGER);
+                if (result) result->as.integer = -inner->as.integer;
+            } else if (inner->type == CCO_TYPE_FLOAT) {
+                result = cco_object_create(CCO_TYPE_FLOAT);
+                if (result) result->as.floating = -inner->as.floating;
+            } else {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "unary minus not defined for %s", cco_type_name(inner->type));
+                cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_value", msg);
+                ctx->last_error = CCO_ERR_PARSE;
+                result = NULL;
+            }
+        } else if (un_op == CCO_TOK_TILDE) {
+            if (inner->type == CCO_TYPE_INTEGER) {
+                result = cco_object_create(CCO_TYPE_INTEGER);
+                if (result) result->as.integer = ~inner->as.integer;
+            } else {
+                ctx->last_error = CCO_ERR_PARSE;
+                result = NULL;
+            }
+        } else if (un_op == CCO_TOK_NOT) {
+            bool truthy = false;
+            if (inner->type == CCO_TYPE_BOOLEAN) truthy = inner->as.boolean;
+            else if (inner->type == CCO_TYPE_INTEGER) truthy = (inner->as.integer != 0);
+            else if (inner->type == CCO_TYPE_FLOAT) truthy = (inner->as.floating != 0.0);
+            else if (inner->type == CCO_TYPE_STRING) truthy = (inner->as.string.length > 0);
+            result = cco_object_create(CCO_TYPE_BOOLEAN);
+            if (result) result->as.boolean = !truthy;
         }
+        if (!result && ctx->last_error != CCO_ERR_PARSE) ctx->last_error = CCO_ERR_NO_MEMORY;
         cco_object_release(inner);
         break;
     }

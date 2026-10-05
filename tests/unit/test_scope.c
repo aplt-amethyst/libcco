@@ -1484,6 +1484,63 @@ static void test_ast_macro(void) {
     cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
 }
 
+static void test_bitwise_ops(void) {
+    tests_run++; 
+    cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_arena_t arena; cco_arena_init(&arena, 1024);
+    cco_scope_t root; cco_scope_init(&root, NULL);
+    
+    cco_parser_init(&ctx, "a: Integer = $( 5 & 3 )", strlen("a: Integer = $( 5 & 3 )"), &opts, &arena);
+    ctx.scope = &root; cco_src_loc_t loc = {0};
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    cco_object_t* val = cco_scope_lookup(&root, "a");
+    assert(val != NULL); assert(val->as.integer == 1);
+    
+    cco_parser_init(&ctx, "b: Integer = $( 5 | 3 )", strlen("b: Integer = $( 5 | 3 )"), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "b");
+    assert(val != NULL); assert(val->as.integer == 7);
+    
+    cco_parser_init(&ctx, "c: Integer = $( 5 ^ 3 )", strlen("c: Integer = $( 5 ^ 3 )"), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "c");
+    assert(val != NULL); assert(val->as.integer == 6);
+    
+    cco_parser_init(&ctx, "d: Integer = $( ~5 )", strlen("d: Integer = $( ~5 )"), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "d");
+    assert(val != NULL); assert(val->as.integer == ~5);
+    
+    cco_parser_init(&ctx, "e: Integer = $( 1 << 3 )", strlen("e: Integer = $( 1 << 3 )"), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "e");
+    assert(val != NULL); assert(val->as.integer == 8);
+    
+    cco_parser_init(&ctx, "f: Integer = $( 8 >> 2 )", strlen("f: Integer = $( 8 >> 2 )"), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "f");
+    assert(val != NULL); assert(val->as.integer == 2);
+    
+    cco_parser_init(&ctx, "g: Integer = $( null ?? 42 )", strlen("g: Integer = $( null ?? 42 )"), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "g");
+    assert(val != NULL); assert(val->as.integer == 42);
+
+    cco_parser_init(&ctx, "h: Integer = $( 10 ?? 42 )", strlen("h: Integer = $( 10 ?? 42 )"), &opts, &arena);
+    ctx.scope = &root;
+    assert(cco_parse_bind(&ctx, &loc) == PARSE_BIND_OK);
+    val = cco_scope_lookup(&root, "h");
+    assert(val != NULL); assert(val->as.integer == 10);
+    
+    cco_scope_destroy(&root); cco_arena_destroy(&arena); tests_passed++;
+}
+
 void test_scope_all(void) {
     test_scope_basic();
     test_parse_bind_ok();
@@ -1554,4 +1611,6 @@ void test_scope_all(void) {
     test_expr_string_concat();
     test_string_interpolation();
     test_ast_macro();
+    test_bitwise_ops();
 }
+

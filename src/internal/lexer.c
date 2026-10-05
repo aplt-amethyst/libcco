@@ -351,6 +351,12 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
             out_token->type = CCO_TOK_LTE;
             out_token->text_len = 2;
         }
+        else if (peek(lexer) == '<')
+        {
+            advance(lexer);
+            out_token->type = CCO_TOK_LSHIFT;
+            out_token->text_len = 2;
+        }
         else
             out_token->type = CCO_TOK_LT;
         break;
@@ -359,6 +365,12 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
         {
             advance(lexer);
             out_token->type = CCO_TOK_GTE;
+            out_token->text_len = 2;
+        }
+        else if (peek(lexer) == '>')
+        {
+            advance(lexer);
+            out_token->type = CCO_TOK_RSHIFT;
             out_token->text_len = 2;
         }
         else
