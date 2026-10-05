@@ -9,10 +9,11 @@
 #include "diag.h"
 #include "symtab.h"
 
-static void advance_token(cco_parser_context_t* ctx)
+static inline void advance_token(cco_parser_context_t* ctx)
 {
     ctx->current_token = ctx->next_token;
     cco_lexer_next(&ctx->lexer, &ctx->next_token);
+#ifndef CCO_ENABLE_FAST
     if (ctx->options->max_steps > 0)
     {
         ctx->step_count++;
@@ -24,6 +25,7 @@ static void advance_token(cco_parser_context_t* ctx)
             ctx->last_error = CCO_ERR_OUT_OF_RANGE;
         }
     }
+#endif
 }
 
 void cco_parser_init(cco_parser_context_t* ctx, const char* src, size_t len,
@@ -382,58 +384,84 @@ static cco_object_t* parse_map(cco_parser_context_t* ctx)
             ctx->last_error = CCO_ERR_PARSE;
             break;
         }
-        char key_buf[256] = {0};
+
+        const char* fast_key_ptr = ctx->current_token.text_ptr;
+        size_t fast_key_len = ctx->current_token.text_len;
+        bool is_fast_key = false;
+
+        char key_buf[256];
         size_t key_len = 0;
-        
-        while (1) {
-            size_t klen = ctx->current_token.text_len;
-            if (key_len + klen < sizeof(key_buf)) {
-                memcpy(key_buf + key_len, ctx->current_token.text_ptr, klen);
-                key_len += klen;
+
+        advance_token(ctx);
+        if (ctx->current_token.type == CCO_TOK_COLON) {
+            is_fast_key = true;
+        } else if (ctx->current_token.type == CCO_TOK_DOT) {
+            // Fallback for nested keys
+            if (fast_key_len < sizeof(key_buf)) {
+                memcpy(key_buf, fast_key_ptr, fast_key_len);
+                key_len = fast_key_len;
             }
-            advance_token(ctx);
-            if (ctx->current_token.type == CCO_TOK_DOT) {
+            while (ctx->current_token.type == CCO_TOK_DOT) {
                 if (key_len < sizeof(key_buf)) key_buf[key_len++] = '.';
                 advance_token(ctx);
                 if (ctx->current_token.type != CCO_TOK_IDENTIFIER) {
                     ctx->last_error = CCO_ERR_PARSE;
                     break;
                 }
-            } else {
-                break;
+                size_t klen = ctx->current_token.text_len;
+                if (key_len + klen < sizeof(key_buf)) {
+                    memcpy(key_buf + key_len, ctx->current_token.text_ptr, klen);
+                    key_len += klen;
+                }
+                advance_token(ctx);
             }
         }
+
         if (ctx->last_error != CCO_OK) break;
-        char* key = malloc(key_len + 1);
-        if (!key)
-        {
-            ctx->last_error = CCO_ERR_NO_MEMORY;
-            break;
+        
+        if (!is_fast_key) {
+            key_buf[key_len] = '\0';
         }
-        memcpy(key, key_buf, key_len);
-        key[key_len] = '\0';
+
         if (ctx->current_token.type != CCO_TOK_COLON && !ctx->in_expr)
         {
-            free(key);
             ctx->last_error = CCO_ERR_PARSE;
             break;
         }
         advance_token(ctx);
+        
         cco_object_t* val = parse_value(ctx);
-        if (!val)
-        {
-            free(key);
-            break;
-        }
+        if (!val) break;
+
         cco_error_t err = CCO_OK;
-        if (strncmp(key, "$define.", 8) == 0) {
-            if (ctx->symtab) {
-                cco_symtab_add_macro(ctx->symtab, key + 8, val);
+#ifdef CCO_ENABLE_FAST
+        if (ctx->options->fast_mode) {
+            if (is_fast_key) {
+                err = cco_map_append_fast_len(obj, fast_key_ptr, fast_key_len, val);
+            } else {
+                err = cco_map_append_fast_len(obj, key_buf, key_len, val);
             }
         } else {
-            err = cco_map_insert(obj, key, val);
+#else
+        {
+#endif
+            if (is_fast_key) {
+                // Must null terminate for cco_map_insert
+                if (fast_key_len < sizeof(key_buf)) {
+                    memcpy(key_buf, fast_key_ptr, fast_key_len);
+                    key_buf[fast_key_len] = '\0';
+                }
+                key_len = fast_key_len;
+            }
+            if (strncmp(key_buf, "$define.", 8) == 0) {
+                if (ctx->symtab) {
+                    cco_symtab_add_macro(ctx->symtab, key_buf + 8, val);
+                }
+            } else {
+                err = cco_map_insert(obj, key_buf, val);
+            }
         }
-        free(key);
+        
         cco_object_release(val);
         if (err != CCO_OK)
         {

@@ -91,6 +91,7 @@ bool cco_object_equals(const cco_object_t* a, const cco_object_t* b);
 
 cco_error_t cco_array_append(cco_object_t* arr, cco_object_t* item);
 cco_error_t cco_map_append_fast(cco_object_t* map, const char* key, cco_object_t* value);
+cco_error_t cco_map_append_fast_len(cco_object_t* map, const char* key, size_t key_len, cco_object_t* value);
 cco_error_t cco_map_insert(cco_object_t* map, const char* key,
                            cco_object_t* value);
 cco_error_t cco_tmpl_inst_insert(cco_object_t* inst, const char* key, cco_object_t* value);

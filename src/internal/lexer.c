@@ -203,8 +203,10 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
 
     skip_whitespace(lexer);
 
+#ifndef CCO_ENABLE_FAST
     out_token->line = lexer->line;
     out_token->col = lexer->col;
+#endif
 
     int c = peek(lexer);
     if (c == -1)
@@ -270,10 +272,24 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
     if (isalpha(c) || c == '_' || c == '$')
     {
         size_t start = lexer->pos;
+#ifdef CCO_ENABLE_FAST
+        const char* s = lexer->src;
+        size_t len_src = lexer->src_len;
+        size_t p = lexer->pos;
+        while (p < len_src) {
+            unsigned char ch = s[p];
+            if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '$')
+                p++;
+            else
+                break;
+        }
+        lexer->pos = p;
+#else
         while (isalnum(peek(lexer)) || peek(lexer) == '_' || peek(lexer) == '-' || peek(lexer) == '$')
         {
             advance(lexer);
         }
+#endif
         size_t len = lexer->pos - start;
         out_token->text_ptr = lexer->src + start;
         out_token->text_len = len;

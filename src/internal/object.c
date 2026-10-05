@@ -66,10 +66,21 @@ cco_object_t* cco_object_create(cco_type_t type)
     cco_object_t* obj = NULL;
     if (g_active_dom_arena) {
         obj = cco_arena_alloc(g_active_dom_arena, sizeof(cco_object_t));
-        memset(obj, 0, sizeof(cco_object_t));
         obj->type = type;
         obj->flags = 1; // arena node
         obj->refcount = 1;
+        obj->dom_arena = NULL;
+        if (type == CCO_TYPE_MAP) {
+            obj->as.map.count = 0;
+            obj->as.map.capacity = 0;
+            obj->as.map.keys = NULL;
+            obj->as.map.values = NULL;
+            obj->as.map.hashes = NULL;
+        } else if (type == CCO_TYPE_ARRAY) {
+            obj->as.array.count = 0;
+            obj->as.array.capacity = 0;
+            obj->as.array.items = NULL;
+        }
         return obj;
     }
 
@@ -349,8 +360,8 @@ cco_error_t cco_array_append(cco_object_t* arr, cco_object_t* item)
         return CCO_ERR_INVALID_ARG;
     if (g_active_dom_arena) {
         if (arr->as.array.capacity == 0) {
-            arr->as.array.capacity = 8;
-            arr->as.array.items = cco_arena_alloc(g_active_dom_arena, 8 * sizeof(cco_object_t*));
+            arr->as.array.capacity = 2;
+            arr->as.array.items = cco_arena_alloc(g_active_dom_arena, 2 * sizeof(cco_object_t*));
         } else if (arr->as.array.count >= arr->as.array.capacity) {
             size_t new_cap = arr->as.array.capacity * 2;
             cco_object_t** new_items = cco_arena_alloc(g_active_dom_arena, new_cap * sizeof(cco_object_t*));
@@ -384,16 +395,16 @@ cco_error_t cco_array_append(cco_object_t* arr, cco_object_t* item)
 
 
 
-cco_error_t cco_map_append_fast(cco_object_t* map, const char* key, cco_object_t* value)
+cco_error_t cco_map_append_fast_len(cco_object_t* map, const char* key, size_t klen, cco_object_t* value)
 {
     if (!map || map->type != CCO_TYPE_MAP || !key || !value)
         return CCO_ERR_INVALID_ARG;
         
     if (g_active_dom_arena) {
         if (map->as.map.capacity == 0) {
-            map->as.map.capacity = 8;
-            map->as.map.keys = cco_arena_alloc(g_active_dom_arena, 8 * sizeof(char*));
-            map->as.map.values = cco_arena_alloc(g_active_dom_arena, 8 * sizeof(cco_object_t*));
+            map->as.map.capacity = 2;
+            map->as.map.keys = cco_arena_alloc(g_active_dom_arena, 2 * sizeof(char*));
+            map->as.map.values = cco_arena_alloc(g_active_dom_arena, 2 * sizeof(cco_object_t*));
         } else if (map->as.map.count >= map->as.map.capacity) {
             size_t new_cap = map->as.map.capacity * 2;
             char** new_keys = cco_arena_alloc(g_active_dom_arena, new_cap * sizeof(char*));
@@ -405,17 +416,15 @@ cco_error_t cco_map_append_fast(cco_object_t* map, const char* key, cco_object_t
             map->as.map.capacity = new_cap;
         }
         
-        size_t klen = strlen(key);
         char* dup_key = cco_arena_alloc(g_active_dom_arena, klen + 1);
-        memcpy(dup_key, key, klen + 1);
+        memcpy(dup_key, key, klen);
+        dup_key[klen] = '\0';
         map->as.map.keys[map->as.map.count] = dup_key;
 
         map->as.map.values[map->as.map.count] = value;
         map->as.map.count++;
         return CCO_OK;
     }
-
-    size_t klen = strlen(key);
 
     if (map->as.map.count >= map->as.map.capacity)
     {
@@ -436,12 +445,19 @@ cco_error_t cco_map_append_fast(cco_object_t* map, const char* key, cco_object_t
     }
     char* dup_key = cco_fast_alloc(klen + 1);
     if (!dup_key) return CCO_ERR_NO_MEMORY;
-    memcpy(dup_key, key, klen + 1);
+    memcpy(dup_key, key, klen);
+    dup_key[klen] = '\0';
     map->as.map.keys[map->as.map.count] = dup_key;
     map->as.map.values[map->as.map.count] = value;
     map->as.map.count++;
     cco_object_retain(value);
     return CCO_OK;
+}
+
+cco_error_t cco_map_append_fast(cco_object_t* map, const char* key, cco_object_t* value)
+{
+    if (!key) return CCO_ERR_INVALID_ARG;
+    return cco_map_append_fast_len(map, key, strlen(key), value);
 }
 
 cco_error_t cco_map_insert(cco_object_t* map, const char* key,
