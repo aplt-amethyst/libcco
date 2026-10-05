@@ -29,6 +29,35 @@ static inline uint32_t fast_hash(const char* key, size_t len) {
 static CCO_THREAD_LOCAL cco_object_t* g_obj_pool[CCO_POOL_MAX];
 static CCO_THREAD_LOCAL size_t g_obj_pool_count = 0;
 
+#define ARRAY_POOL_MAX 32768
+static CCO_THREAD_LOCAL void* g_str_pool_16[ARRAY_POOL_MAX];
+static CCO_THREAD_LOCAL size_t g_str_pool_16_count = 0;
+static CCO_THREAD_LOCAL void* g_pool_32[ARRAY_POOL_MAX];
+static CCO_THREAD_LOCAL size_t g_pool_32_count = 0;
+static CCO_THREAD_LOCAL void* g_pool_64[ARRAY_POOL_MAX];
+static CCO_THREAD_LOCAL size_t g_pool_64_count = 0;
+
+static inline void* cco_fast_alloc(size_t size) {
+    if (size <= 16 && g_str_pool_16_count > 0) return g_str_pool_16[--g_str_pool_16_count];
+    if (size == 32 && g_pool_32_count > 0) return g_pool_32[--g_pool_32_count];
+    if (size == 64 && g_pool_64_count > 0) return g_pool_64[--g_pool_64_count];
+    return malloc(size);
+}
+
+static inline void cco_fast_free(void* ptr, size_t size) {
+    if (!ptr) return;
+    if (size <= 16 && g_str_pool_16_count < ARRAY_POOL_MAX) {
+        g_str_pool_16[g_str_pool_16_count++] = ptr;
+    } else if (size == 32 && g_pool_32_count < ARRAY_POOL_MAX) {
+        g_pool_32[g_pool_32_count++] = ptr;
+    } else if (size == 64 && g_pool_64_count < ARRAY_POOL_MAX) {
+        g_pool_64[g_pool_64_count++] = ptr;
+    } else {
+        free(ptr);
+    }
+}
+
+
 cco_object_t* cco_object_create(cco_type_t type)
 {
     cco_object_t* obj;
@@ -79,27 +108,27 @@ void cco_object_release(cco_object_t* obj)
             {
                 cco_object_release(obj->as.array.items[i]);
             }
-            free(obj->as.array.items);
+            cco_fast_free(obj->as.array.items, obj->as.array.capacity * sizeof(cco_object_t*));
             break;
         case CCO_TYPE_MAP:
             for (size_t i = 0; i < obj->as.map.count; i++)
             {
-                free(obj->as.map.keys[i]);
+                cco_fast_free(obj->as.map.keys[i], strlen(obj->as.map.keys[i]) + 1);
                 cco_object_release(obj->as.map.values[i]);
             }
-            free(obj->as.map.keys);
-            free(obj->as.map.values);
-            free(obj->as.map.hashes);
+            cco_fast_free(obj->as.map.keys, obj->as.map.capacity * sizeof(char*));
+            cco_fast_free(obj->as.map.values, obj->as.map.capacity * sizeof(cco_object_t*));
+            cco_fast_free(obj->as.map.hashes, obj->as.map.capacity * sizeof(uint32_t));
             break;
         case CCO_TYPE_TEMPLATE_INSTANCE:
             for (size_t i = 0; i < obj->as.tmpl_inst.fields.count; i++)
             {
-                free(obj->as.tmpl_inst.fields.keys[i]);
+                cco_fast_free(obj->as.tmpl_inst.fields.keys[i], strlen(obj->as.tmpl_inst.fields.keys[i]) + 1);
                 cco_object_release(obj->as.tmpl_inst.fields.values[i]);
             }
-            free(obj->as.tmpl_inst.fields.keys);
-            free(obj->as.tmpl_inst.fields.values);
-            free(obj->as.tmpl_inst.fields.hashes);
+            cco_fast_free(obj->as.tmpl_inst.fields.keys, obj->as.tmpl_inst.fields.capacity * sizeof(char*));
+            cco_fast_free(obj->as.tmpl_inst.fields.values, obj->as.tmpl_inst.fields.capacity * sizeof(cco_object_t*));
+            cco_fast_free(obj->as.tmpl_inst.fields.hashes, obj->as.tmpl_inst.fields.capacity * sizeof(uint32_t));
             break;
         default:
             break;
@@ -301,8 +330,12 @@ cco_error_t cco_array_append(cco_object_t* arr, cco_object_t* item)
     {
         size_t new_cap =
             arr->as.array.capacity == 0 ? 8 : arr->as.array.capacity * 2;
-        cco_object_t** new_items =
-            realloc(arr->as.array.items, new_cap * sizeof(cco_object_t*));
+        cco_object_t** new_items = NULL;
+        if (arr->as.array.capacity == 0 && new_cap == 8) {
+            new_items = cco_fast_alloc(8 * sizeof(cco_object_t*));
+        } else {
+            new_items = realloc(arr->as.array.items, new_cap * sizeof(cco_object_t*));
+        }
         if (!new_items)
             return CCO_ERR_NO_MEMORY;
         arr->as.array.items = new_items;
@@ -334,10 +367,20 @@ cco_error_t cco_map_insert(cco_object_t* map, const char* key,
     {
         size_t new_cap =
             map->as.map.capacity == 0 ? 8 : map->as.map.capacity * 2;
-        char** new_keys = realloc(map->as.map.keys, new_cap * sizeof(char*));
-        cco_object_t** new_vals =
-            realloc(map->as.map.values, new_cap * sizeof(cco_object_t*));
-        uint32_t* new_hashes = realloc(map->as.map.hashes, new_cap * sizeof(uint32_t));
+        char** new_keys = NULL;
+        cco_object_t** new_vals = NULL;
+        uint32_t* new_hashes = NULL;
+        if (map->as.map.capacity == 0 && new_cap == 8) {
+            new_keys = cco_fast_alloc(8 * sizeof(char*));
+            new_vals = cco_fast_alloc(8 * sizeof(cco_object_t*));
+            new_hashes = cco_fast_alloc(8 * sizeof(uint32_t));
+        } else {
+            new_keys = realloc(map->as.map.keys, new_cap * sizeof(char*));
+            new_vals = realloc(map->as.map.values, new_cap * sizeof(cco_object_t*));
+            new_hashes = realloc(map->as.map.hashes, new_cap * sizeof(uint32_t));
+        }
+        
+        
         if (!new_keys || !new_vals || !new_hashes)
             return CCO_ERR_NO_MEMORY;
         map->as.map.keys = new_keys;
@@ -345,7 +388,7 @@ cco_error_t cco_map_insert(cco_object_t* map, const char* key,
         map->as.map.hashes = new_hashes;
         map->as.map.capacity = new_cap;
     }
-    char* dup_key = malloc(klen + 1);
+    char* dup_key = cco_fast_alloc(klen + 1);
     if (!dup_key)
         return CCO_ERR_NO_MEMORY;
     memcpy(dup_key, key, klen + 1);
@@ -371,16 +414,27 @@ cco_error_t cco_tmpl_inst_insert(cco_object_t* inst, const char* key, cco_object
     }
     if (inst->as.tmpl_inst.fields.count >= inst->as.tmpl_inst.fields.capacity) {
         size_t new_cap = inst->as.tmpl_inst.fields.capacity == 0 ? 8 : inst->as.tmpl_inst.fields.capacity * 2;
-        char** new_keys = realloc(inst->as.tmpl_inst.fields.keys, new_cap * sizeof(char*));
-        cco_object_t** new_vals = realloc(inst->as.tmpl_inst.fields.values, new_cap * sizeof(cco_object_t*));
-        uint32_t* new_hashes = realloc(inst->as.tmpl_inst.fields.hashes, new_cap * sizeof(uint32_t));
+        char** new_keys = NULL;
+        cco_object_t** new_vals = NULL;
+        uint32_t* new_hashes = NULL;
+        if (inst->as.tmpl_inst.fields.capacity == 0 && new_cap == 8) {
+            new_keys = cco_fast_alloc(8 * sizeof(char*));
+            new_vals = cco_fast_alloc(8 * sizeof(cco_object_t*));
+            new_hashes = cco_fast_alloc(8 * sizeof(uint32_t));
+        } else {
+            new_keys = realloc(inst->as.tmpl_inst.fields.keys, new_cap * sizeof(char*));
+            new_vals = realloc(inst->as.tmpl_inst.fields.values, new_cap * sizeof(cco_object_t*));
+            new_hashes = realloc(inst->as.tmpl_inst.fields.hashes, new_cap * sizeof(uint32_t));
+        }
+        
+        
         if (!new_keys || !new_vals || !new_hashes) return CCO_ERR_NO_MEMORY;
         inst->as.tmpl_inst.fields.keys = new_keys;
         inst->as.tmpl_inst.fields.values = new_vals;
         inst->as.tmpl_inst.fields.hashes = new_hashes;
         inst->as.tmpl_inst.fields.capacity = new_cap;
     }
-    char* dup_key = malloc(klen + 1);
+    char* dup_key = cco_fast_alloc(klen + 1);
     if (!dup_key) return CCO_ERR_NO_MEMORY;
     memcpy(dup_key, key, klen + 1);
     inst->as.tmpl_inst.fields.keys[inst->as.tmpl_inst.fields.count] = dup_key;
