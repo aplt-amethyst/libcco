@@ -259,7 +259,11 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
         bool is_float = false;
         while (isalnum(peek(lexer)) || peek(lexer) == '_' || peek(lexer) == '.')
         {
-            if (peek(lexer) == '.') is_float = true;
+            if (peek(lexer) == '.') {
+                int next_char = lexer->pos + 1 < lexer->src_len ? lexer->src[lexer->pos + 1] : -1;
+                if (next_char == '.') break; // do not consume ..
+                is_float = true;
+            }
             advance(lexer);
         }
         out_token->type = is_float ? CCO_TOK_FLOAT : CCO_TOK_INTEGER;

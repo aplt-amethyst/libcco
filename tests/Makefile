@@ -7,6 +7,7 @@ CPPFLAGS += -I../include -I../src/internal
 
 TARGET_DIR := ../target/tests
 LIBCCO     := ../target/debug/liblibcco.a
+LIBCCO_REL := ../target/release/liblibcco.a
 
 UNIT_SRCS := $(wildcard unit/*.c)
 UNIT_OBJS := $(patsubst %.c,$(TARGET_DIR)/%.o,$(UNIT_SRCS))
@@ -20,12 +21,16 @@ FUZZ_SRCS := $(wildcard fuzz/*.c)
 FUZZ_OBJS := $(patsubst %.c,$(TARGET_DIR)/%.o,$(FUZZ_SRCS))
 FUZZ_BIN  := $(TARGET_DIR)/run_fuzzer
 
-.PHONY: all clean unit_tests integration_tests fuzz_tests dirs
+BENCH_SRC := benchmarks/benchmark_main.c
+BENCH_OBJ := $(TARGET_DIR)/benchmarks/benchmark_main.o
+BENCH_BIN := $(TARGET_DIR)/run_benchmarks
+
+.PHONY: all clean unit_tests integration_tests fuzz_tests benchmarks dirs
 
 all: dirs unit_tests integration_tests
 
 dirs:
-	@mkdir -p $(TARGET_DIR)/unit $(TARGET_DIR)/integration $(TARGET_DIR)/fuzz
+	@mkdir -p $(TARGET_DIR)/unit $(TARGET_DIR)/integration $(TARGET_DIR)/fuzz $(TARGET_DIR)/benchmarks
 
 unit_tests: dirs $(UNIT_BIN)
 	@echo "==> Running unit tests..."
@@ -61,9 +66,15 @@ fuzz_tests: dirs $(FUZZ_BIN)
 $(FUZZ_BIN): $(FUZZ_OBJS) $(LIBCCO)
 	$(CC) $(CFLAGS) $(OPT) $^ -o $@ -lm $(LDFLAGS)
 
+benchmarks: dirs $(BENCH_BIN)
+	@echo "==> Running benchmarks..."
+	@$(BENCH_BIN)
+
+$(BENCH_BIN): $(BENCH_OBJ) $(LIBCCO_REL)
+	$(CC) $(CFLAGS) -O3 $^ -o $@ -lm $(LDFLAGS)
+
 $(TARGET_DIR)/%.o: %.c | dirs
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(OPT) -c $< -o $@ -lm
 
 clean:
 	rm -rf $(TARGET_DIR)
-obj/test_expr.o: unit/test_expr.c
