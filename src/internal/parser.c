@@ -28,6 +28,95 @@ static inline void advance_token(cco_parser_context_t* ctx)
 #endif
 }
 
+static inline void* fast_arena_alloc(cco_arena_t* restrict a, size_t n) {
+    size_t aligned_n = (n + 7) & ~7;
+    if (a->curr && a->curr->used + aligned_n <= a->curr->capacity) {
+        void* ptr = a->curr->data + a->curr->used;
+        a->curr->used += aligned_n;
+        a->total_allocated += aligned_n;
+        return ptr;
+    }
+    return cco_arena_alloc(a, n);
+}
+
+static inline void* fast_arena_alloc_obj(cco_arena_t* restrict a) {
+    return fast_arena_alloc(a, sizeof(cco_object_t));
+}
+
+static inline cco_error_t fast_map_append(cco_arena_t* arena, cco_object_t* map, const char* key, size_t klen, cco_object_t* value) {
+    if (arena) {
+        if (map->as.map.capacity == 0) {
+            map->as.map.capacity = 2;
+            map->as.map.keys = fast_arena_alloc(arena, 2 * sizeof(char*));
+            map->as.map.values = fast_arena_alloc(arena, 2 * sizeof(cco_object_t*));
+        } else if (map->as.map.count >= map->as.map.capacity) {
+            size_t new_cap = map->as.map.capacity * 2;
+            char** new_keys = fast_arena_alloc(arena, new_cap * sizeof(char*));
+            cco_object_t** new_vals = fast_arena_alloc(arena, new_cap * sizeof(cco_object_t*));
+            memcpy(new_keys, map->as.map.keys, map->as.map.count * sizeof(char*));
+            memcpy(new_vals, map->as.map.values, map->as.map.count * sizeof(cco_object_t*));
+            map->as.map.keys = new_keys;
+            map->as.map.values = new_vals;
+            map->as.map.capacity = new_cap;
+        }
+        
+        char* dup_key = fast_arena_alloc(arena, klen + 1);
+        memcpy(dup_key, key, klen);
+        dup_key[klen] = '\0';
+        map->as.map.keys[map->as.map.count] = dup_key;
+        map->as.map.values[map->as.map.count] = value;
+        map->as.map.count++;
+        return CCO_OK;
+    }
+    return cco_map_append_fast_len(map, key, klen, value);
+}
+
+static inline cco_error_t fast_array_append(cco_arena_t* arena, cco_object_t* arr, cco_object_t* item) {
+    if (arena) {
+        if (arr->as.array.capacity == 0) {
+            arr->as.array.capacity = 2;
+            arr->as.array.items = fast_arena_alloc(arena, 2 * sizeof(cco_object_t*));
+        } else if (arr->as.array.count >= arr->as.array.capacity) {
+            size_t new_cap = arr->as.array.capacity * 2;
+            cco_object_t** new_items = fast_arena_alloc(arena, new_cap * sizeof(cco_object_t*));
+            memcpy(new_items, arr->as.array.items, arr->as.array.count * sizeof(cco_object_t*));
+            arr->as.array.items = new_items;
+            arr->as.array.capacity = new_cap;
+        }
+        arr->as.array.items[arr->as.array.count++] = item;
+        return CCO_OK;
+    }
+    return cco_array_append(arr, item);
+}
+
+static inline cco_object_t* fast_create_object(cco_parser_context_t* ctx, cco_type_t type)
+{
+#ifdef CCO_ENABLE_ZERO_COPY
+    if (ctx->arena) {
+        cco_object_t* obj = fast_arena_alloc_obj(ctx->arena);
+        if (obj) {
+            obj->type = type;
+            obj->flags = 1;
+            obj->refcount = 1;
+            obj->dom_arena = NULL;
+            if (type == CCO_TYPE_MAP) {
+                obj->as.map.count = 0;
+                obj->as.map.capacity = 0;
+                obj->as.map.keys = NULL;
+                obj->as.map.values = NULL;
+                obj->as.map.hashes = NULL;
+            } else if (type == CCO_TYPE_ARRAY) {
+                obj->as.array.count = 0;
+                obj->as.array.capacity = 0;
+                obj->as.array.items = NULL;
+            }
+        }
+        return obj;
+    }
+#endif
+    return cco_object_create(type);
+}
+
 void cco_parser_init(cco_parser_context_t* ctx, const char* src, size_t len,
                      const cco_parse_options_t* opts, cco_arena_t* arena)
 {
@@ -270,7 +359,7 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
                     ctx->last_error = CCO_ERR_PARSE; free(pname); break;
                 }
                 /* create PARAM value for parse time lookup */
-                cco_object_t* arg_val = cco_object_create(CCO_TYPE_PARAM);
+                cco_object_t* arg_val = fast_create_object(ctx, CCO_TYPE_PARAM);
                 if (arg_val) arg_val->as.param.name = strdup(pname);
                 cco_scope_bind(&method_scope, pname, arg_val);
                 /* bind takes ownership */
@@ -366,7 +455,7 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
 }
 static cco_object_t* parse_map(cco_parser_context_t* ctx)
 {
-    cco_object_t* obj = cco_object_create(CCO_TYPE_MAP);
+    cco_object_t* obj = fast_create_object(ctx, CCO_TYPE_MAP);
     if (!obj)
     {
         ctx->last_error = CCO_ERR_NO_MEMORY;
@@ -435,32 +524,28 @@ static cco_object_t* parse_map(cco_parser_context_t* ctx)
 
         cco_error_t err = CCO_OK;
 #ifdef CCO_ENABLE_FAST
-        if (ctx->options->fast_mode) {
-            if (is_fast_key) {
-                err = cco_map_append_fast_len(obj, fast_key_ptr, fast_key_len, val);
-            } else {
-                err = cco_map_append_fast_len(obj, key_buf, key_len, val);
+        if (is_fast_key) {
+            err = fast_map_append(ctx->arena, obj, fast_key_ptr, fast_key_len, val);
+        } else {
+            err = fast_map_append(ctx->arena, obj, key_buf, key_len, val);
+        }
+#else
+        if (is_fast_key) {
+            // Must null terminate for cco_map_insert
+            if (fast_key_len < sizeof(key_buf)) {
+                memcpy(key_buf, fast_key_ptr, fast_key_len);
+                key_buf[fast_key_len] = '\0';
+            }
+            key_len = fast_key_len;
+        }
+        if (strncmp(key_buf, "$define.", 8) == 0) {
+            if (ctx->symtab) {
+                cco_symtab_add_macro(ctx->symtab, key_buf + 8, val);
             }
         } else {
-#else
-        {
-#endif
-            if (is_fast_key) {
-                // Must null terminate for cco_map_insert
-                if (fast_key_len < sizeof(key_buf)) {
-                    memcpy(key_buf, fast_key_ptr, fast_key_len);
-                    key_buf[fast_key_len] = '\0';
-                }
-                key_len = fast_key_len;
-            }
-            if (strncmp(key_buf, "$define.", 8) == 0) {
-                if (ctx->symtab) {
-                    cco_symtab_add_macro(ctx->symtab, key_buf + 8, val);
-                }
-            } else {
-                err = cco_map_insert(obj, key_buf, val);
-            }
+            err = cco_map_insert(obj, key_buf, val);
         }
+#endif
         
         cco_object_release(val);
         if (err != CCO_OK)
@@ -491,7 +576,7 @@ static cco_object_t* parse_map(cco_parser_context_t* ctx)
 
 static cco_object_t* parse_array(cco_parser_context_t* ctx)
 {
-    cco_object_t* obj = cco_object_create(CCO_TYPE_ARRAY);
+    cco_object_t* obj = fast_create_object(ctx, CCO_TYPE_ARRAY);
     if (!obj)
     {
         ctx->last_error = CCO_ERR_NO_MEMORY;
@@ -506,7 +591,7 @@ static cco_object_t* parse_array(cco_parser_context_t* ctx)
         cco_object_t* val = parse_value(ctx);
         if (!val)
             break;
-        cco_error_t err = cco_array_append(obj, val);
+        cco_error_t err = fast_array_append(ctx->arena, obj, val);
         cco_object_release(val);
         if (err != CCO_OK)
         {
@@ -678,13 +763,13 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
                 long long end = right->as.integer;
                 if (op == CCO_TOK_DOTDOTEQ) end++;
                 
-                cco_object_t* arr = cco_object_create(CCO_TYPE_ARRAY);
+                cco_object_t* arr = fast_create_object(ctx, CCO_TYPE_ARRAY);
                 if (arr) {
                     for (long long i = start; i < end; i++) {
-                        cco_object_t* num = cco_object_create(CCO_TYPE_INTEGER);
+                        cco_object_t* num = fast_create_object(ctx, CCO_TYPE_INTEGER);
                         if (num) {
                             num->as.integer = i;
-                            cco_array_append(arr, num);
+                            fast_array_append(ctx->arena, arr, num);
                             cco_object_release(num);
                         }
                     }
@@ -724,7 +809,7 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
             
             cco_object_release(left);
             cco_object_release(right);
-            left = cco_object_create(CCO_TYPE_BOOLEAN);
+            left = fast_create_object(ctx, CCO_TYPE_BOOLEAN);
             if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
             if (op == CCO_TOK_AND) left->as.boolean = (l_truthy && r_truthy);
             else left->as.boolean = (l_truthy || r_truthy);
@@ -739,7 +824,7 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
             
             if (op == CCO_TOK_PLUS || op == CCO_TOK_MINUS || op == CCO_TOK_STAR || op == CCO_TOK_SLASH ||
                 op == CCO_TOK_LSHIFT || op == CCO_TOK_RSHIFT || op == CCO_TOK_AMPERSAND || op == CCO_TOK_CARET || op == CCO_TOK_PIPE) {
-                left = cco_object_create(CCO_TYPE_INTEGER);
+                left = fast_create_object(ctx, CCO_TYPE_INTEGER);
                 if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
                 if (op == CCO_TOK_PLUS) left->as.integer = l + r;
                 else if (op == CCO_TOK_MINUS) left->as.integer = l - r;
@@ -759,7 +844,7 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
                 else if (op == CCO_TOK_CARET) left->as.integer = l ^ r;
                 else if (op == CCO_TOK_PIPE) left->as.integer = l | r;
             } else if (op == CCO_TOK_EQEQ || op == CCO_TOK_NEQ || op == CCO_TOK_LT || op == CCO_TOK_LTE || op == CCO_TOK_GT || op == CCO_TOK_GTE) {
-                left = cco_object_create(CCO_TYPE_BOOLEAN);
+                left = fast_create_object(ctx, CCO_TYPE_BOOLEAN);
                 if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
                 if (op == CCO_TOK_EQEQ) left->as.boolean = (l == r);
                 else if (op == CCO_TOK_NEQ) left->as.boolean = (l != r);
@@ -778,7 +863,7 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
             cco_object_release(right);
             
             if (op == CCO_TOK_PLUS || op == CCO_TOK_MINUS || op == CCO_TOK_STAR || op == CCO_TOK_SLASH) {
-                left = cco_object_create(CCO_TYPE_FLOAT);
+                left = fast_create_object(ctx, CCO_TYPE_FLOAT);
                 if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
                 if (op == CCO_TOK_PLUS) left->as.floating = l + r;
                 else if (op == CCO_TOK_MINUS) left->as.floating = l - r;
@@ -793,7 +878,7 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
                     left->as.floating = l / r;
                 }
             } else if (op == CCO_TOK_EQEQ || op == CCO_TOK_NEQ || op == CCO_TOK_LT || op == CCO_TOK_LTE || op == CCO_TOK_GT || op == CCO_TOK_GTE) {
-                left = cco_object_create(CCO_TYPE_BOOLEAN);
+                left = fast_create_object(ctx, CCO_TYPE_BOOLEAN);
                 if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
                 if (op == CCO_TOK_EQEQ) left->as.boolean = (l == r);
                 else if (op == CCO_TOK_NEQ) left->as.boolean = (l != r);
@@ -821,7 +906,7 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
             
             cco_object_release(left);
             cco_object_release(right);
-            left = cco_object_create(CCO_TYPE_STRING);
+            left = fast_create_object(ctx, CCO_TYPE_STRING);
             if (!left) { free(new_str); cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
             left->as.string.data = new_str;
             left->as.string.length = new_len;
@@ -837,7 +922,7 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
             }
             cco_object_release(left);
             cco_object_release(right);
-            left = cco_object_create(CCO_TYPE_BOOLEAN);
+            left = fast_create_object(ctx, CCO_TYPE_BOOLEAN);
             if (!left) { cco_diag_record(CCO_ERR_NO_MEMORY, op_line, op_col, "parse_expr", "out of memory"); ctx->last_error = CCO_ERR_NO_MEMORY; return NULL; }
             left->as.boolean = (op == CCO_TOK_EQEQ) ? eq : !eq;
         } else {
@@ -907,7 +992,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                 if (ctx->options->allow_env_builtin) {
                     const char* env_val = getenv(env_name);
                     if (env_val) {
-                        cco_object_t* str_obj = cco_object_create(CCO_TYPE_STRING);
+                        cco_object_t* str_obj = fast_create_object(ctx, CCO_TYPE_STRING);
                         if (str_obj) {
                             size_t elen = strlen(env_val);
                             char* dup = cco_arena_alloc(ctx->arena, elen + 1);
@@ -923,7 +1008,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                     }
                 }
 #endif
-                return cco_object_create(CCO_TYPE_NONE);
+                return fast_create_object(ctx, CCO_TYPE_NONE);
             }
         }
     }
@@ -989,6 +1074,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
     if (ctx->last_error != CCO_OK)
         return NULL;
 
+#ifndef CCO_ENABLE_FAST
     if (ctx->options->max_depth > 0 && ctx->depth >= ctx->options->max_depth)
     {
         cco_diag_record(CCO_ERR_OUT_OF_RANGE, ctx->current_token.line,
@@ -997,8 +1083,11 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         ctx->last_error = CCO_ERR_OUT_OF_RANGE;
         return NULL;
     }
+#endif
 
+#ifndef CCO_ENABLE_FAST
     ctx->depth++;
+#endif
     cco_object_t* result = NULL;
 
     switch (ctx->current_token.type)
@@ -1026,10 +1115,10 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
             result = NULL;
         } else if (un_op == CCO_TOK_MINUS) {
             if (inner->type == CCO_TYPE_INTEGER) {
-                result = cco_object_create(CCO_TYPE_INTEGER);
+                result = fast_create_object(ctx, CCO_TYPE_INTEGER);
                 if (result) result->as.integer = -inner->as.integer;
             } else if (inner->type == CCO_TYPE_FLOAT) {
-                result = cco_object_create(CCO_TYPE_FLOAT);
+                result = fast_create_object(ctx, CCO_TYPE_FLOAT);
                 if (result) result->as.floating = -inner->as.floating;
             } else {
                 char msg[256];
@@ -1040,7 +1129,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
             }
         } else if (un_op == CCO_TOK_TILDE) {
             if (inner->type == CCO_TYPE_INTEGER) {
-                result = cco_object_create(CCO_TYPE_INTEGER);
+                result = fast_create_object(ctx, CCO_TYPE_INTEGER);
                 if (result) result->as.integer = ~inner->as.integer;
             } else {
                 ctx->last_error = CCO_ERR_PARSE;
@@ -1052,7 +1141,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
             else if (inner->type == CCO_TYPE_INTEGER) truthy = (inner->as.integer != 0);
             else if (inner->type == CCO_TYPE_FLOAT) truthy = (inner->as.floating != 0.0);
             else if (inner->type == CCO_TYPE_STRING) truthy = (inner->as.string.length > 0);
-            result = cco_object_create(CCO_TYPE_BOOLEAN);
+            result = fast_create_object(ctx, CCO_TYPE_BOOLEAN);
             if (result) result->as.boolean = !truthy;
         }
         if (!result && ctx->last_error != CCO_ERR_PARSE) ctx->last_error = CCO_ERR_NO_MEMORY;
@@ -1095,7 +1184,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
             free(tname); break;
         }
         
-        result = cco_object_create(CCO_TYPE_TEMPLATE_INSTANCE);
+        result = fast_create_object(ctx, CCO_TYPE_TEMPLATE_INSTANCE);
         if (!result) { ctx->last_error = CCO_ERR_NO_MEMORY; free(tname); break; }
         result->as.tmpl_inst.template_name = cco_intern_string(&ctx->symtab->aliases, tname, strlen(tname));
         free(tname);
@@ -1268,23 +1357,23 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         break;
     }
     case CCO_TOK_NONE:
-        result = cco_object_create(CCO_TYPE_NONE);
+        result = fast_create_object(ctx, CCO_TYPE_NONE);
         advance_token(ctx);
         break;
     case CCO_TOK_TRUE:
-        result = cco_object_create(CCO_TYPE_BOOLEAN);
+        result = fast_create_object(ctx, CCO_TYPE_BOOLEAN);
         if (result)
             result->as.boolean = true;
         advance_token(ctx);
         break;
     case CCO_TOK_FALSE:
-        result = cco_object_create(CCO_TYPE_BOOLEAN);
+        result = fast_create_object(ctx, CCO_TYPE_BOOLEAN);
         if (result)
             result->as.boolean = false;
         advance_token(ctx);
         break;
     case CCO_TOK_INTEGER:
-        result = cco_object_create(CCO_TYPE_INTEGER);
+        result = fast_create_object(ctx, CCO_TYPE_INTEGER);
         if (result)
         {
             char tmp[64];
@@ -1298,7 +1387,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         advance_token(ctx);
         break;
     case CCO_TOK_FLOAT:
-        result = cco_object_create(CCO_TYPE_FLOAT);
+        result = fast_create_object(ctx, CCO_TYPE_FLOAT);
         if (result)
         {
             char tmp[64];
@@ -1318,7 +1407,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
 #ifdef CCO_ENABLE_FAST
         /* In fast mode, bypass interpolation entirely or use fast memchr */
         if (memchr(s_data, '$', s_len) == NULL) {
-            cco_object_t* obj = cco_object_create(CCO_TYPE_STRING);
+            cco_object_t* obj = fast_create_object(ctx, CCO_TYPE_STRING);
             if (obj) {
                 obj->as.string.data = (char*)s_data; // zero-copy pointer directly into src
                 obj->as.string.length = s_len;
@@ -1328,7 +1417,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         }
 #else
         if (memchr(s_data, '$', s_len) == NULL) {
-            cco_object_t* obj = cco_object_create(CCO_TYPE_STRING);
+            cco_object_t* obj = fast_create_object(ctx, CCO_TYPE_STRING);
             if (obj) {
                 char* dup = malloc(s_len + 1);
                 if (dup) {
@@ -1408,7 +1497,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         }
         
         if (!has_error) {
-            result = cco_object_create(CCO_TYPE_STRING);
+            result = fast_create_object(ctx, CCO_TYPE_STRING);
             if (result) {
                 char* sdup = malloc(sb.length + 1);
                 if (sdup) {
@@ -1442,7 +1531,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         else if (ctx->current_token.type == CCO_TOK_COMMA && ctx->next_token.type == CCO_TOK_RPAREN)
         {
             advance_token(ctx);
-            result = cco_object_create(CCO_TYPE_ARRAY);
+            result = fast_create_object(ctx, CCO_TYPE_ARRAY);
         }
         else
         {
@@ -1471,7 +1560,9 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         break;
     }
 
+#ifndef CCO_ENABLE_FAST
     ctx->depth--;
+#endif
     return result;
 }
 

@@ -63,6 +63,7 @@ static cco_error_t skip_whitespace(cco_lexer_t* lexer)
             break;
     }
     lexer->pos = pos;
+    return CCO_OK;
 #endif
 
     while (1)
