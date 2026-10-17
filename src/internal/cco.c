@@ -5,6 +5,7 @@
 
 #include "arena.h"
 #include "diag.h"
+#include "object.h"
 #include "parser.h"
 #include "serializer.h"
 #include "strbuf.h"
@@ -91,16 +92,6 @@ cco_object_t* cco_parse_string(const char* src, size_t len,
 #ifdef CCO_ENABLE_ZERO_COPY
     if (opts->zero_copy_dom) {
         
-#ifdef _MSC_VER
-#define CCO_THREAD_LOCAL __declspec(thread)
-#elif defined(__GNUC__) || defined(__clang__)
-#define CCO_THREAD_LOCAL __thread
-#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
-#define CCO_THREAD_LOCAL _Thread_local
-#else
-#define CCO_THREAD_LOCAL
-#endif
-        extern CCO_THREAD_LOCAL cco_arena_t* g_active_dom_arena;
         cco_parser_context_t ctx;
 
         cco_arena_t* dom = opts->custom_arena;
@@ -110,7 +101,7 @@ cco_object_t* cco_parse_string(const char* src, size_t len,
             cco_arena_init(dom, opts->max_total_allocation);
             own_dom = true;
         }
-        g_active_dom_arena = dom;
+        cco_set_active_dom_arena(dom);
         cco_parser_init(&ctx, src, len, opts, dom);
         root = cco_parse_document(&ctx);
         if (root) {
@@ -123,7 +114,7 @@ cco_object_t* cco_parse_string(const char* src, size_t len,
                 free(dom);
             }
         }
-        g_active_dom_arena = NULL;
+        cco_set_active_dom_arena(NULL);
         return root;
     }
 #endif

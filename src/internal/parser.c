@@ -29,7 +29,7 @@ static inline void advance_token(cco_parser_context_t* ctx)
 }
 
 static inline void* fast_arena_alloc(cco_arena_t* restrict a, size_t n) {
-    size_t aligned_n = (n + 7) & ~7;
+    size_t aligned_n = (n + 7) & ~((size_t)7);
     if (a->curr && a->curr->used + aligned_n <= a->curr->capacity) {
         void* ptr = a->curr->data + a->curr->used;
         a->curr->used += aligned_n;
@@ -44,7 +44,7 @@ static inline void* fast_arena_alloc_obj(cco_arena_t* restrict a) {
 }
 
 static inline cco_error_t fast_map_append(cco_arena_t* arena, cco_object_t* map, const char* key, size_t klen, cco_object_t* value) {
-    if (arena) {
+    if (arena && (map->flags & 1)) {
         if (map->as.map.capacity == 0) {
             map->as.map.capacity = 2;
             map->as.map.keys = fast_arena_alloc(arena, 2 * sizeof(char*));
@@ -72,7 +72,7 @@ static inline cco_error_t fast_map_append(cco_arena_t* arena, cco_object_t* map,
 }
 
 static inline cco_error_t fast_array_append(cco_arena_t* arena, cco_object_t* arr, cco_object_t* item) {
-    if (arena) {
+    if (arena && (arr->flags & 1)) {
         if (arr->as.array.capacity == 0) {
             arr->as.array.capacity = 2;
             arr->as.array.items = fast_arena_alloc(arena, 2 * sizeof(cco_object_t*));
@@ -91,6 +91,7 @@ static inline cco_error_t fast_array_append(cco_arena_t* arena, cco_object_t* ar
 
 static inline cco_object_t* fast_create_object(cco_parser_context_t* ctx, cco_type_t type)
 {
+    (void)ctx;
 #ifdef CCO_ENABLE_ZERO_COPY
     if (ctx->arena) {
         cco_object_t* obj = fast_arena_alloc_obj(ctx->arena);
@@ -130,6 +131,7 @@ void cco_parser_init(cco_parser_context_t* ctx, const char* src, size_t len,
         ctx->last_error = CCO_OK;
         ctx->recovery_mode = false;
         ctx->scope = NULL;
+        ctx->symtab = NULL;
         ctx->in_expr = false;
 
         /* Prime the tokens */
@@ -140,7 +142,7 @@ void cco_parser_init(cco_parser_context_t* ctx, const char* src, size_t len,
 
 /* Forward declarations */
 static cco_object_t* parse_value(cco_parser_context_t* ctx);
-cco_object_t* parse_expr(cco_parser_context_t* ctx);
+static cco_object_t* parse_expr(cco_parser_context_t* ctx);
 
 /* Infra-only: parse_bind implementation for Step 2 */
 typedef struct {
@@ -453,6 +455,66 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
     
     return NULL;
 }
+
+static bool is_dotted_map_key(const cco_parser_context_t* ctx)
+{
+    if (ctx->current_token.type != CCO_TOK_IDENTIFIER ||
+        ctx->next_token.type != CCO_TOK_DOT)
+    {
+        return false;
+    }
+    const char* src = ctx->lexer.src;
+    size_t len = ctx->lexer.src_len;
+    if (!src || !ctx->next_token.text_ptr)
+        return false;
+    size_t pos = (size_t)(ctx->next_token.text_ptr - src);
+    while (pos < len)
+    {
+        char c = src[pos];
+        if (c == '/' && pos + 1 < len && src[pos + 1] == '*')
+        {
+            pos += 2;
+            while (pos + 1 < len && !(src[pos] == '*' && src[pos + 1] == '/'))
+                pos++;
+            if (pos + 1 < len)
+                pos += 2;
+            continue;
+        }
+
+        if (c == '.' || c == '_' || c == '-' || c == '$' ||
+            (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == ' ' || c == '\t' ||
+            c == '\r' || c == '\n')
+        {
+            pos++;
+        }
+        else if (c == ':')
+        {
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    return false;
+}
+
+static inline bool is_map_entry_start(const cco_parser_context_t* ctx)
+{
+    if (ctx->next_token.type == CCO_TOK_COLON)
+    {
+        return (ctx->current_token.type == CCO_TOK_IDENTIFIER ||
+                ctx->current_token.type == CCO_TOK_STRING);
+    }
+    if (ctx->current_token.type == CCO_TOK_IDENTIFIER &&
+        ctx->next_token.type == CCO_TOK_DOT)
+    {
+        return is_dotted_map_key(ctx);
+    }
+    return false;
+}
+
 static cco_object_t* parse_map(cco_parser_context_t* ctx)
 {
     cco_object_t* obj = fast_create_object(ctx, CCO_TYPE_MAP);
@@ -474,79 +536,183 @@ static cco_object_t* parse_map(cco_parser_context_t* ctx)
             break;
         }
 
-        const char* fast_key_ptr = ctx->current_token.text_ptr;
-        size_t fast_key_len = ctx->current_token.text_len;
-        bool is_fast_key = false;
+        const char* token_key_ptr = ctx->current_token.text_ptr;
+        size_t token_key_len = ctx->current_token.text_len;
 
-        char key_buf[256];
+        const char* src = ctx->lexer.src;
+        size_t src_len = ctx->lexer.src_len;
+        bool is_in_src = (src && token_key_ptr >= src && token_key_ptr < src + src_len);
+
+        char stack_key_buf[256];
+        char* heap_key_buf = NULL;
+        char* key_buf = stack_key_buf;
+        size_t key_cap = sizeof(stack_key_buf) - 1;
         size_t key_len = 0;
+        bool has_copied_key = false;
+
+        if (!is_in_src)
+        {
+            /* Key came from scratch_buf (escaped string). Copy immediately. */
+            if (token_key_len > key_cap)
+            {
+                heap_key_buf = (char*)malloc(token_key_len + 1);
+                if (!heap_key_buf)
+                {
+                    ctx->last_error = CCO_ERR_NO_MEMORY;
+                    break;
+                }
+                key_buf = heap_key_buf;
+                key_cap = token_key_len;
+            }
+            if (token_key_ptr && token_key_len > 0)
+            {
+                memcpy(key_buf, token_key_ptr, token_key_len);
+            }
+            key_len = token_key_len;
+            has_copied_key = true;
+        }
 
         advance_token(ctx);
-        if (ctx->current_token.type == CCO_TOK_COLON) {
-            is_fast_key = true;
-        } else if (ctx->current_token.type == CCO_TOK_DOT) {
-            // Fallback for nested keys
-            if (fast_key_len < sizeof(key_buf)) {
-                memcpy(key_buf, fast_key_ptr, fast_key_len);
-                key_len = fast_key_len;
+        if (ctx->current_token.type == CCO_TOK_DOT)
+        {
+            if (!has_copied_key)
+            {
+                if (token_key_len > key_cap)
+                {
+                    heap_key_buf = (char*)malloc(token_key_len * 2 + 1);
+                    if (!heap_key_buf)
+                    {
+                        ctx->last_error = CCO_ERR_NO_MEMORY;
+                        break;
+                    }
+                    key_buf = heap_key_buf;
+                    key_cap = token_key_len * 2;
+                }
+                if (token_key_ptr && token_key_len > 0)
+                {
+                    memcpy(key_buf, token_key_ptr, token_key_len);
+                }
+                key_len = token_key_len;
+                has_copied_key = true;
             }
-            while (ctx->current_token.type == CCO_TOK_DOT) {
-                if (key_len < sizeof(key_buf)) key_buf[key_len++] = '.';
+            while (ctx->current_token.type == CCO_TOK_DOT)
+            {
                 advance_token(ctx);
-                if (ctx->current_token.type != CCO_TOK_IDENTIFIER) {
+                if (ctx->current_token.type != CCO_TOK_IDENTIFIER)
+                {
                     ctx->last_error = CCO_ERR_PARSE;
                     break;
                 }
-                size_t klen = ctx->current_token.text_len;
-                if (key_len + klen < sizeof(key_buf)) {
-                    memcpy(key_buf + key_len, ctx->current_token.text_ptr, klen);
-                    key_len += klen;
+                size_t seg_len = ctx->current_token.text_len;
+                size_t new_len = key_len + 1 + seg_len;
+                if (new_len > key_cap)
+                {
+                    size_t new_cap = new_len * 2;
+                    char* new_heap = (char*)realloc(heap_key_buf, new_cap + 1);
+                    if (!new_heap)
+                    {
+                        ctx->last_error = CCO_ERR_NO_MEMORY;
+                        break;
+                    }
+                    if (!heap_key_buf)
+                    {
+                        memcpy(new_heap, stack_key_buf, key_len);
+                    }
+                    heap_key_buf = new_heap;
+                    key_buf = heap_key_buf;
+                    key_cap = new_cap;
+                }
+                key_buf[key_len++] = '.';
+                if (ctx->current_token.text_ptr && seg_len > 0)
+                {
+                    memcpy(key_buf + key_len, ctx->current_token.text_ptr, seg_len);
+                    key_len += seg_len;
                 }
                 advance_token(ctx);
             }
         }
 
-        if (ctx->last_error != CCO_OK) break;
-        
-        if (!is_fast_key) {
-            key_buf[key_len] = '\0';
+        if (ctx->last_error != CCO_OK)
+        {
+            if (heap_key_buf)
+                free(heap_key_buf);
+            break;
         }
 
         if (ctx->current_token.type != CCO_TOK_COLON && !ctx->in_expr)
         {
             ctx->last_error = CCO_ERR_PARSE;
+            if (heap_key_buf)
+                free(heap_key_buf);
             break;
         }
         advance_token(ctx);
-        
+
         cco_object_t* val = parse_value(ctx);
-        if (!val) break;
+        if (!val)
+        {
+            if (heap_key_buf)
+                free(heap_key_buf);
+            break;
+        }
 
         cco_error_t err = CCO_OK;
 #ifdef CCO_ENABLE_FAST
-        if (is_fast_key) {
-            err = fast_map_append(ctx->arena, obj, fast_key_ptr, fast_key_len, val);
-        } else {
-            err = fast_map_append(ctx->arena, obj, key_buf, key_len, val);
+        const char* final_key_ptr = token_key_ptr;
+        size_t final_key_len = token_key_len;
+        if (has_copied_key)
+        {
+            key_buf[key_len] = '\0';
+            final_key_ptr = key_buf;
+            final_key_len = key_len;
         }
+        err = fast_map_append(ctx->arena, obj, final_key_ptr, final_key_len, val);
 #else
-        if (is_fast_key) {
-            // Must null terminate for cco_map_insert
-            if (fast_key_len < sizeof(key_buf)) {
-                memcpy(key_buf, fast_key_ptr, fast_key_len);
-                key_buf[fast_key_len] = '\0';
+        if (has_copied_key)
+        {
+            key_buf[key_len] = '\0';
+            if (strncmp(key_buf, "$define.", 8) == 0)
+            {
+                if (ctx->symtab)
+                    cco_symtab_add_macro(ctx->symtab, key_buf + 8, val);
             }
-            key_len = fast_key_len;
+            else
+            {
+                err = cco_map_insert(obj, key_buf, val);
+            }
         }
-        if (strncmp(key_buf, "$define.", 8) == 0) {
-            if (ctx->symtab) {
-                cco_symtab_add_macro(ctx->symtab, key_buf + 8, val);
+        else
+        {
+            if (token_key_len > key_cap)
+            {
+                heap_key_buf = (char*)malloc(token_key_len + 1);
+                if (!heap_key_buf)
+                {
+                    ctx->last_error = CCO_ERR_NO_MEMORY;
+                    cco_object_release(val);
+                    break;
+                }
+                key_buf = heap_key_buf;
             }
-        } else {
-            err = cco_map_insert(obj, key_buf, val);
+            memcpy(key_buf, token_key_ptr, token_key_len);
+            key_buf[token_key_len] = '\0';
+            if (strncmp(key_buf, "$define.", 8) == 0)
+            {
+                if (ctx->symtab)
+                    cco_symtab_add_macro(ctx->symtab, key_buf + 8, val);
+            }
+            else
+            {
+                err = cco_map_insert(obj, key_buf, val);
+            }
         }
 #endif
-        
+        if (heap_key_buf)
+        {
+            free(heap_key_buf);
+            heap_key_buf = NULL;
+        }
+
         cco_object_release(val);
         if (err != CCO_OK)
         {
@@ -957,7 +1123,7 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
     return left;
 }
 
-cco_object_t* parse_expr(cco_parser_context_t* ctx) {
+static cco_object_t* parse_expr(cco_parser_context_t* ctx) {
     return parse_expr_inner(ctx, 1);
 }
 static cco_object_t* parse_value(cco_parser_context_t* ctx)
@@ -1046,8 +1212,14 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                     return NULL;
                 }
                 fseek(f, 0, SEEK_END);
-                long fsize = ftell(f);
+                long fsize_long = ftell(f);
                 fseek(f, 0, SEEK_SET);
+                if (fsize_long < 0) {
+                    fclose(f);
+                    ctx->last_error = CCO_ERR_PARSE;
+                    return NULL;
+                }
+                size_t fsize = (size_t)fsize_long;
                 
                 char* fcontent = malloc(fsize + 1);
                 if (!fcontent) {
@@ -1235,7 +1407,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                 /* Check if field exists */
                 long fidx = -1;
                 for (size_t i = 0; i < def->field_count; ++i) {
-                    if (strcmp(def->fields[i].name, fname) == 0) { fidx = i; break; }
+                    if (strcmp(def->fields[i].name, fname) == 0) { fidx = (long)i; break; }
                 }
                 if (fidx == -1) {
                     char msg[128];
@@ -1413,7 +1585,8 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                 obj->as.string.length = s_len;
             }
             advance_token(ctx);
-            return obj;
+            result = obj;
+            break;
         }
 #else
         if (memchr(s_data, '$', s_len) == NULL) {
@@ -1428,7 +1601,8 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                 }
             }
             advance_token(ctx);
-            return obj;
+            result = obj;
+            break;
         }
 #endif
 
@@ -1460,18 +1634,18 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                     break;
                 }
                 
-                i += (sub_ctx.current_token.text_ptr - (s_data + i)) + sub_ctx.current_token.text_len;
+                i += (size_t)(sub_ctx.current_token.text_ptr - (s_data + i)) + sub_ctx.current_token.text_len;
                 
                 if (expr_val->type == CCO_TYPE_STRING) {
                     cco_strbuf_append(&sb, expr_val->as.string.data, expr_val->as.string.length);
                 } else if (expr_val->type == CCO_TYPE_INTEGER) {
                     char buf[64];
                     int n = snprintf(buf, sizeof(buf), "%lld", (long long)expr_val->as.integer);
-                    cco_strbuf_append(&sb, buf, n);
+                    if (n > 0) cco_strbuf_append(&sb, buf, (size_t)n);
                 } else if (expr_val->type == CCO_TYPE_FLOAT) {
                     char buf[64];
                     int n = snprintf(buf, sizeof(buf), "%g", expr_val->as.floating);
-                    cco_strbuf_append(&sb, buf, n);
+                    if (n > 0) cco_strbuf_append(&sb, buf, (size_t)n);
                 } else if (expr_val->type == CCO_TYPE_BOOLEAN) {
                     if (expr_val->as.boolean) cco_strbuf_append(&sb, "true", 4);
                     else cco_strbuf_append(&sb, "false", 5);
@@ -1519,8 +1693,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
     }
     case CCO_TOK_LPAREN:
         advance_token(ctx);
-        if (ctx->current_token.type == CCO_TOK_IDENTIFIER &&
-            ctx->next_token.type == CCO_TOK_COLON)
+        if (is_map_entry_start(ctx))
         {
             result = parse_map(ctx);
         }
@@ -1541,12 +1714,28 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
             advance_token(ctx);
         break;
     case CCO_TOK_LBRACE:
+        if (ctx->options && !ctx->options->lenient_brackets)
+        {
+            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line,
+                            ctx->current_token.col, "parse_value",
+                            "Unexpected token '{' (lenient_brackets disabled)");
+            ctx->last_error = CCO_ERR_PARSE;
+            break;
+        }
         advance_token(ctx);
         result = parse_map(ctx);
         if (ctx->current_token.type == CCO_TOK_RBRACE)
             advance_token(ctx);
         break;
     case CCO_TOK_LBRACKET:
+        if (ctx->options && !ctx->options->lenient_brackets)
+        {
+            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line,
+                            ctx->current_token.col, "parse_value",
+                            "Unexpected token '[' (lenient_brackets disabled)");
+            ctx->last_error = CCO_ERR_PARSE;
+            break;
+        }
         advance_token(ctx);
         result = parse_array(ctx);
         if (ctx->current_token.type == CCO_TOK_RBRACKET)
@@ -1734,8 +1923,7 @@ cco_object_t* cco_parse_document(cco_parser_context_t* ctx)
         goto cleanup;
     }
 
-    if (ctx->current_token.type == CCO_TOK_IDENTIFIER &&
-        ctx->next_token.type == CCO_TOK_COLON)
+    if (is_map_entry_start(ctx))
     {
         root = parse_map(ctx);
     }

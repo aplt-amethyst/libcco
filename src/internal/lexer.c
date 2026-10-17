@@ -1,6 +1,7 @@
 #include "lexer.h"
 
 #include <ctype.h>
+#include <stdint.h>
 #include <string.h>
 
 #include "diag.h"
@@ -169,6 +170,73 @@ static cco_error_t parse_string(cco_lexer_t* lexer, cco_token_t* out_token)
                 cco_strbuf_append(&lexer->scratch_buf, "\"", 1);
             else if (ec == '\\')
                 cco_strbuf_append(&lexer->scratch_buf, "\\", 1);
+            else if (ec == 'x')
+            {
+                int h1 = advance(lexer);
+                int h2 = advance(lexer);
+                if (h1 != -1 && h2 != -1 && isxdigit(h1) && isxdigit(h2))
+                {
+                    int v1 = (h1 >= '0' && h1 <= '9') ? (h1 - '0') :
+                             (h1 >= 'a' && h1 <= 'f') ? (h1 - 'a' + 10) : (h1 - 'A' + 10);
+                    int v2 = (h2 >= '0' && h2 <= '9') ? (h2 - '0') :
+                             (h2 >= 'a' && h2 <= 'f') ? (h2 - 'a' + 10) : (h2 - 'A' + 10);
+                    char byte_val = (char)((v1 << 4) | v2);
+                    cco_strbuf_append(&lexer->scratch_buf, &byte_val, 1);
+                }
+                else
+                {
+                    cco_diag_record(CCO_ERR_INVALID_ARG, lexer->line, lexer->col,
+                                    "parse_string", "Invalid hex escape sequence");
+                    return CCO_ERR_INVALID_ARG;
+                }
+            }
+            else if (ec == 'u')
+            {
+                int h[4];
+                bool valid = true;
+                for (int j = 0; j < 4; j++)
+                {
+                    h[j] = advance(lexer);
+                    if (h[j] == -1 || !isxdigit(h[j])) { valid = false; break; }
+                }
+                if (valid)
+                {
+                    uint32_t cp = 0;
+                    for (int j = 0; j < 4; j++)
+                    {
+                        int digit = (h[j] >= '0' && h[j] <= '9') ? (h[j] - '0') :
+                                    (h[j] >= 'a' && h[j] <= 'f') ? (h[j] - 'a' + 10) :
+                                    (h[j] - 'A' + 10);
+                        cp = (cp << 4) | (uint32_t)digit;
+                    }
+                    if (cp <= 0x7F)
+                    {
+                        char b = (char)cp;
+                        cco_strbuf_append(&lexer->scratch_buf, &b, 1);
+                    }
+                    else if (cp <= 0x7FF)
+                    {
+                        char b[2];
+                        b[0] = (char)(0xC0 | ((cp >> 6) & 0x1F));
+                        b[1] = (char)(0x80 | (cp & 0x3F));
+                        cco_strbuf_append(&lexer->scratch_buf, b, 2);
+                    }
+                    else
+                    {
+                        char b[3];
+                        b[0] = (char)(0xE0 | ((cp >> 12) & 0x0F));
+                        b[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                        b[2] = (char)(0x80 | (cp & 0x3F));
+                        cco_strbuf_append(&lexer->scratch_buf, b, 3);
+                    }
+                }
+                else
+                {
+                    cco_diag_record(CCO_ERR_INVALID_ARG, lexer->line, lexer->col,
+                                    "parse_string", "Invalid unicode escape sequence");
+                    return CCO_ERR_INVALID_ARG;
+                }
+            }
             else
             {
                 cco_diag_record(CCO_ERR_INVALID_ARG, lexer->line, lexer->col,
@@ -221,6 +289,40 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
     if (c == '"')
     {
         return parse_string(lexer, out_token);
+    }
+
+    if (c == '`')
+    {
+        size_t start_col = lexer->col;
+        size_t start_line = lexer->line;
+        advance(lexer); /* skip ` */
+        size_t start_pos = lexer->pos;
+        while (lexer->pos < lexer->src_len && lexer->src[lexer->pos] != '`')
+        {
+#ifndef CCO_ENABLE_FAST
+            if (lexer->src[lexer->pos] == '\n')
+            {
+                lexer->line++;
+                lexer->col = 1;
+            }
+            else
+            {
+                lexer->col++;
+            }
+#endif
+            lexer->pos++;
+        }
+        if (lexer->pos >= lexer->src_len)
+        {
+            cco_diag_record(CCO_ERR_PARSE, start_line, start_col, "parse_string",
+                            "Unterminated raw string literal");
+            return CCO_ERR_PARSE;
+        }
+        out_token->type = CCO_TOK_STRING;
+        out_token->text_ptr = lexer->src + start_pos;
+        out_token->text_len = lexer->pos - start_pos;
+        advance(lexer); /* skip ` */
+        return CCO_OK;
     }
 
 

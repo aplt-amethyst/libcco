@@ -8,6 +8,7 @@ secrets.*
 
 # Build artifacts
 target/
+build/
 build-*/
 *.o
 *.a
@@ -27,3 +28,7 @@ Testing/
 
 # System
 .DS_Store
+
+# Agent frameworks and scratch
+.agents/
+.omo/

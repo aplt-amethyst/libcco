@@ -955,7 +955,7 @@ static void test_tmpl_inst_pos_all(void) {
     const char* src2 = "#Point(1, 2)";
     cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
     ctx.symtab = &symtab;
-    cco_object_t* p = parse_expr(&ctx);
+    cco_object_t* p = cco_parse_document(&ctx);
     assert(p != NULL && p->type == CCO_TYPE_TEMPLATE_INSTANCE);
     assert(ctx.last_error == CCO_OK);
     cco_object_t* x = NULL; cco_object_t* y = NULL;
@@ -979,7 +979,7 @@ static void test_tmpl_inst_pos_default(void) {
     const char* src2 = "#Server(\"localhost\")";
     cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
     ctx.symtab = &symtab;
-    cco_object_t* s = parse_expr(&ctx);
+    cco_object_t* s = cco_parse_document(&ctx);
     assert(s && s->type == CCO_TYPE_TEMPLATE_INSTANCE);
     assert(ctx.last_error == CCO_OK);
     cco_object_t* port = NULL;
@@ -1001,7 +1001,7 @@ static void test_tmpl_inst_pos_missing(void) {
     const char* src2 = "#Server(\"localhost\")";
     cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
     ctx.symtab = &symtab;
-    cco_object_t* s = parse_expr(&ctx);
+    cco_object_t* s = cco_parse_document(&ctx);
     assert(s == NULL);
     assert(ctx.last_error == CCO_ERR_PARSE);
     size_t diag_count = 0;
@@ -1021,7 +1021,7 @@ static void test_tmpl_inst_named_all(void) {
     const char* src2 = "#Server(.host: \"localhost\", .port: 80)";
     cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
     ctx.symtab = &symtab;
-    cco_object_t* s = parse_expr(&ctx);
+    cco_object_t* s = cco_parse_document(&ctx);
     assert(s && s->type == CCO_TYPE_TEMPLATE_INSTANCE);
     assert(ctx.last_error == CCO_OK);
     
@@ -1038,7 +1038,7 @@ static void test_tmpl_inst_named_order(void) {
     const char* src2 = "#Server(.port: 80, .host: \"localhost\")";
     cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
     ctx.symtab = &symtab;
-    cco_object_t* s = parse_expr(&ctx);
+    cco_object_t* s = cco_parse_document(&ctx);
     assert(s && s->type == CCO_TYPE_TEMPLATE_INSTANCE);
     assert(ctx.last_error == CCO_OK);
     
@@ -1055,7 +1055,7 @@ static void test_tmpl_inst_named_default(void) {
     const char* src2 = "#Server(.host: \"localhost\")";
     cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
     ctx.symtab = &symtab;
-    cco_object_t* s = parse_expr(&ctx);
+    cco_object_t* s = cco_parse_document(&ctx);
     assert(s && s->type == CCO_TYPE_TEMPLATE_INSTANCE);
     assert(ctx.last_error == CCO_OK);
     cco_object_t* port = NULL;
@@ -1077,7 +1077,7 @@ static void test_tmpl_inst_unknown_field(void) {
     const char* src2 = "#Server(.host: \"x\", .foo: 1)";
     cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
     ctx.symtab = &symtab;
-    cco_object_t* s = parse_expr(&ctx);
+    cco_object_t* s = cco_parse_document(&ctx);
     assert(s == NULL);
     assert(ctx.last_error == CCO_ERR_PARSE);
     size_t diag_count = 0;
@@ -1097,7 +1097,7 @@ static void test_tmpl_inst_missing_nodef(void) {
     const char* src2 = "#Server()";
     cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
     ctx.symtab = &symtab;
-    cco_object_t* s = parse_expr(&ctx);
+    cco_object_t* s = cco_parse_document(&ctx);
     assert(s == NULL);
     assert(ctx.last_error == CCO_ERR_PARSE);
     size_t diag_count = 0;
@@ -1117,7 +1117,7 @@ static void test_tmpl_inst_mix(void) {
     const char* src2 = "#Server(\"localhost\", .port: 80)";
     cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
     ctx.symtab = &symtab;
-    cco_object_t* s = parse_expr(&ctx);
+    cco_object_t* s = cco_parse_document(&ctx);
     assert(s == NULL);
     assert(ctx.last_error == CCO_ERR_PARSE);
     size_t diag_count = 0;
@@ -1141,7 +1141,7 @@ static void test_tmpl_inst_inherit_pos(void) {
     const char* src3 = "#SecureServer(\"localhost\", 8080, \"/etc/cert.pem\")";
     cco_parser_init(&ctx, src3, strlen(src3), &opts, &arena);
     ctx.symtab = &symtab;
-    cco_object_t* s = parse_expr(&ctx);
+    cco_object_t* s = cco_parse_document(&ctx);
     assert(s && s->type == CCO_TYPE_TEMPLATE_INSTANCE);
     assert(ctx.last_error == CCO_OK);
     
@@ -1165,7 +1165,7 @@ static void test_tmpl_inst_colon(void) {
     const char* src2 = "#Point: (.x: 1, .y: 2)";
     cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
     ctx.symtab = &symtab;
-    cco_object_t* p = parse_expr(&ctx);
+    cco_object_t* p = cco_parse_document(&ctx);
     assert(p != NULL && p->type == CCO_TYPE_TEMPLATE_INSTANCE);
     assert(ctx.last_error == CCO_OK);
     cco_object_t* x = NULL;
@@ -1187,7 +1187,7 @@ static void test_tmpl_inst_type_fail(void) {
     const char* src2 = "#Server(1234)";
     cco_parser_init(&ctx, src2, strlen(src2), &opts, &arena);
     ctx.symtab = &symtab;
-    cco_object_t* s = parse_expr(&ctx);
+    cco_object_t* s = cco_parse_document(&ctx);
     assert(s == NULL);
     assert(ctx.last_error == CCO_ERR_PARSE);
     size_t diag_count = 0;
@@ -1459,6 +1459,7 @@ static void test_string_interpolation(void) {
 static void test_ast_macro(void) {
     tests_run++;
     cco_parser_context_t ctx; cco_parse_options_t opts = {0};
+    cco_parse_options_init(&opts);
     cco_arena_t arena; cco_arena_init(&arena, 1024);
     cco_symtab_t symtab; cco_symtab_init(&symtab, &arena);
     

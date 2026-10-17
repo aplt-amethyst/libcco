@@ -133,6 +133,22 @@ With it off, `$function.@` in source is parse-rejected.
 The struct field `options.allow_constructors` exists only when this flag
 is on.
 
+### `CCO_ENABLE_FAST` (default `OFF`)
+
+Enables high-performance fast parsing paths, inlining lexing, bypassing duplicate map key hashing, and optimizing token handling for extreme throughput.
+
+### `CCO_ENABLE_ZERO_COPY` (default `OFF`)
+
+Enables zero-copy DOM arena allocation for string and node buffers during parsing.
+
+### `CCO_ENABLE_INCLUDE` (default `OFF`)
+
+Enables `$include("path")` directive support for modular document inclusion.
+
+### `CCO_ENABLE_STRICT_SAFETY` (default `OFF`)
+
+Enables strict memory bounds and safety checks within options and parse contexts.
+
 ## ABI consistency
 
 The flags change the layout of `cco_parse_options_t`. Four of them

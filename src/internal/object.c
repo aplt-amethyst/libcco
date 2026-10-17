@@ -26,7 +26,12 @@ static inline uint32_t fast_hash(const char* key, size_t len) {
     return hash;
 }
 
-CCO_THREAD_LOCAL cco_arena_t* g_active_dom_arena = NULL;
+static CCO_THREAD_LOCAL cco_arena_t* g_active_dom_arena = NULL;
+
+void cco_set_active_dom_arena(cco_arena_t* arena)
+{
+    g_active_dom_arena = arena;
+}
 #define CCO_POOL_MAX 4096
 static CCO_THREAD_LOCAL cco_object_t* g_obj_pool[CCO_POOL_MAX];
 static CCO_THREAD_LOCAL size_t g_obj_pool_count = 0;

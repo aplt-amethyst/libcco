@@ -1,4 +1,5 @@
 #include "arena.h"
+#include <cnt/cco.h>
 
 #include <stdint.h>
 #include <stdlib.h>

@@ -96,4 +96,6 @@ cco_error_t cco_map_insert(cco_object_t* map, const char* key,
                            cco_object_t* value);
 cco_error_t cco_tmpl_inst_insert(cco_object_t* inst, const char* key, cco_object_t* value);
 
+void cco_set_active_dom_arena(cco_arena_t* arena);
+
 #endif /* CNT_CCO_INTERNAL_OBJECT_H */

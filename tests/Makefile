@@ -37,6 +37,7 @@ unit_tests: dirs $(UNIT_BIN)
 	@$(UNIT_BIN)
 
 $(UNIT_BIN): $(TARGET_DIR)/test_main.o $(UNIT_OBJS) $(LIBCCO)
+	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(OPT) $^ -o $@ -lm $(LDFLAGS)
 
 integration_tests: dirs $(INTEG_BIN)
@@ -57,6 +58,7 @@ integration_tests: dirs $(INTEG_BIN)
 	if [ $$failed -ne 0 ]; then exit 1; fi
 
 $(INTEG_BIN): $(INTEG_OBJ) $(LIBCCO)
+	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(OPT) $^ -o $@ -lm $(LDFLAGS)
 
 fuzz_tests: dirs $(FUZZ_BIN)
@@ -64,6 +66,7 @@ fuzz_tests: dirs $(FUZZ_BIN)
 	@if [ -x $(FUZZ_BIN) ]; then $(FUZZ_BIN) -runs=10000; else echo "Fuzzer not built."; fi
 
 $(FUZZ_BIN): $(FUZZ_OBJS) $(LIBCCO)
+	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(OPT) $^ -o $@ -lm $(LDFLAGS)
 
 benchmarks: dirs $(BENCH_BIN)
@@ -71,10 +74,18 @@ benchmarks: dirs $(BENCH_BIN)
 	@$(BENCH_BIN)
 
 $(BENCH_BIN): $(BENCH_OBJ) $(LIBCCO_REL)
+	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -O3 $^ -o $@ -lm $(LDFLAGS)
 
 $(TARGET_DIR)/%.o: %.c | dirs
+	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(OPT) -c $< -o $@ -lm
+
+$(LIBCCO):
+	$(MAKE) -C .. build.debug
+
+$(LIBCCO_REL):
+	$(MAKE) -C .. build.release
 
 clean:
 	rm -rf $(TARGET_DIR)

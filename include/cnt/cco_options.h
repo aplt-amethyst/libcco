@@ -3,6 +3,12 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include "cnt/cco_export.h"
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
 
 typedef struct
 {
@@ -67,6 +73,10 @@ typedef struct
 } cco_parse_options_t;
 
 /* Initializes options with default values */
-void cco_parse_options_init(cco_parse_options_t* opts);
+CCO_API void cco_parse_options_init(cco_parse_options_t* opts);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* CNT_CCO_OPTIONS_H */

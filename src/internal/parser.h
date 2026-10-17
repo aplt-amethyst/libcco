@@ -43,7 +43,6 @@ typedef enum {
     PARSE_BIND_ERROR
 } cco_parse_bind_result_t;
 
-cco_object_t* parse_expr(cco_parser_context_t* ctx);
 cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx, cco_src_loc_t* out_err_loc);
 
 cco_object_t* cco_parse_function(cco_parser_context_t* ctx);

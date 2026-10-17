@@ -336,7 +336,7 @@ This is actually a shorthand (detailed in Chapter 7). The full form is:
 (name: "libcco", version: 1)
 ```
 
-Wrapped in parentheses `()`, with `key: value` pairs separated by commas -- this is CCO's **map** (also called a dictionary or object).
+Wrapped in parentheses `()` or braces `{}`, with `key: value` pairs separated by commas -- this is CCO's **map** (also called a dictionary or object).
 
 ## 5.2 What a Map Looks Like
 
@@ -349,11 +349,11 @@ person: (
 )
 ```
 
-Outer parentheses `(...)` enclose comma-separated key-value pairs.
+Outer parentheses `(...)` or braces `{...}` enclose comma-separated key-value pairs.
 
 ## 5.3 Empty Map
 
-An empty `()` is an empty map:
+An empty `()` or `{}` is an empty map:
 
 ```cco
 empty_object: ()
@@ -413,9 +413,14 @@ mixed: (
 (name: "Alice", age: 30)
 ```
 
-## 5.7 Keys Are Identifiers
+## 5.7 Keys Can Be Identifiers or Strings
 
-Map keys **do not need quotes** -- they are written as identifiers (letters, digits, underscores; must not start with a digit).
+Map keys can be written as identifiers (letters, digits, underscores; must not start with a digit) without quotes, or as quoted strings.
+
+```cco
+/* NOTE: valid keys */
+(name: 1, _count: 2, "content-type": 3)
+```
 
 ```cco
 /* NOTE: valid keys */
@@ -434,15 +439,22 @@ Map keys **do not need quotes** -- they are written as identifiers (letters, dig
 
 Next chapter -- arrays.
 
+Trailing commas are allowed: `(a: 1, b: 2,)`.
+
 
 <!-- 06-arrays/readme.md -->
 # Chapter 6: Arrays -- Lists
 
 After this chapter you will be able to write arrays and understand the difference between maps and arrays.
 
-## 6.1 Arrays Also Use `()`
+## 6.1 Arrays Use `()` or `[]`
 
-Yes -- CCO arrays **also** use parentheses:
+CCO arrays can use traditional parentheses or standard brackets:
+
+```cco
+/* NOTE: an array of numbers */
+numbers: [1, 2, 3, 4, 5]
+```
 
 ```cco
 /* NOTE: an array of numbers */
@@ -453,7 +465,7 @@ numbers: (1, 2, 3, 4, 5)
 
 Here is the rule you need to remember:
 
-> If the **first element** inside `(...)` is a `key: value` pair, it is a map. Otherwise it is an array.
+> If you use `[]` it is always an array. If you use `{}` it is always a map. If you use `()`, and the **first element** is a `key: value` pair, it is a map. Otherwise it is an array.
 
 | Writing | First Element | Result |
 |---------|--------------|--------|
@@ -512,7 +524,17 @@ scores: (
 
 Above, `scores` is an array where each element is a map.
 
-## 6.6 Summary
+## 6.7 Ranges
+
+Generate arrays up to 10000 elements dynamically using `..` (half-open) or `..=` (inclusive):
+
+```cco
+[1..10]    /* 1 to 9 */
+[1..=10]   /* 1 to 10 */
+[10..1]    /* 10 down to 2 */
+```
+
+## 6.8 Summary
 
 | | Map | Array |
 |---|-----|-------|
@@ -522,6 +544,8 @@ Above, `scores` is an array where each element is a map.
 | First element `k: v` | yes | no |
 
 Next chapter -- the top-level shorthand, the most common way to write `.cco` files.
+
+Trailing commas are allowed: `(1, 2, 3,)` / `[1, 2, 3,]`.
 
 
 <!-- 07-shorthand/readme.md -->
@@ -1256,21 +1280,43 @@ result: $(10 + 20)
 | `*` | multiplication | `$(6 * 7)` | 42 |
 | `/` | division | `$(10 / 3)` | 3 (integer) |
 
-## 16.4 Operator Precedence
+## 16.4 Power and Bitwise Operators
 
-Multiplication and division take precedence over addition and subtraction (as in math):
+CCO also supports the power operator `**` and bitwise operators `|`, `&`, `^`, `~`:
 
 ```cco
-    result: $(10 + 20 * 3)    /* NOTE: = 10 + 60 = 70 */
-
-    result: $($(10 + 20) * 3)  /* NOTE: = 30 * 3 = 90 */
-
-    a: $(10 + 20),          /* NOTE: 30 (integer) */
-    b: $(10.5 + 20),        /* NOTE: 30.5 (float) */
-    c: $(1.5 * 2)           /* NOTE: 3.0 (float) */
+a: $(2 ** 3),      /* NOTE: 8 */
+b: $(3 | 5),       /* NOTE: bitwise OR, 7 */
+c: $(~0)           /* NOTE: bitwise NOT */
 ```
 
+## 16.5 Operator Precedence
+
+Expressions are evaluated strictly according to the following precedence levels (from highest to lowest):
+
+1. **Unary**: `+` `-` `!` `~`
+2. **Power**: `**` (Right-associative)
+3. **Multiplication/Division**: `*` `/`
+4. **Addition/Subtraction**: `+` `-`
+5. **Ranges**: `..` `..=`
+6. **Coalesce**: `??`
+7. **Comparison**: `<` `<=` `>` `>=`
+8. **Equality**: `==` `!=`
+9. **Bitwise AND**: `&`
+10. **Bitwise XOR**: `^`
+11. **Bitwise OR**: `|`
+12. **Logical AND**: `&&`
+13. **Ternary**: `? :` (Right-associative)
+14. **Logical OR**: `||`
+
+You can always use nested `$(...)` to force a specific evaluation order.
+
 If either operand is float, the result is float.
+
+```cco
+A: $(10 + 20 * 3)    /* NOTE: = 10 + 60 = 70 */
+B: $($(10 + 20) * 3) /* NOTE: = 30 * 3 = 90 */
+```
 
 ## 16.6 Where Can Expressions Be Used?
 
@@ -1284,11 +1330,12 @@ For evaluation, the C API (`cco_expr_eval`) is used.
 ## 16.7 Summary
 
 - `$(expression)` marks an expression
-- Supports `+` `-` `*` `/`
+- Supports `+` `-` `*` `/` `**` `|` `&` `^` `~`
 - Multiplication/division before addition/subtraction
 - Nested `$(...)` changes precedence
 
 Next chapter -- comparison and logical operators.
+
 
 
 <!-- 17-comparison-logic/readme.md -->
@@ -1310,16 +1357,16 @@ After this chapter you will be able to use comparison and logical operators in C
 Results are boolean values `true` or `false`:
 
 ```cco
-    a: $(10 == 10),   /* NOTE: true */
-    b: $(10 != 5),    /* NOTE: true */
-    c: $(3 > 10)      /* NOTE: false */
+a: $(10 == 10),   /* NOTE: true */
+b: $(10 != 5),    /* NOTE: true */
+c: $(3 > 10)      /* NOTE: false */
 
-    both:  $(true && true),       /* NOTE: true */
-    either: $(true || false),      /* NOTE: true */
-    not_it: $(!false)              /* NOTE: true */
+both:  $(true && true),       /* NOTE: true */
+either: $(true || false),     /* NOTE: true */
+not_it: $(!false)             /* NOTE: true */
 
-    result: $($(10 > 5) && $(3 < 10)),   /* NOTE: true && true = true */
-    result: $($(10 == 10) || $(5 == 3))  /* NOTE: true || false = true */
+result: $($(10 > 5) && $(3 < 10)),   /* NOTE: true && true = true */
+result: $($(10 == 10) || $(5 == 3))  /* NOTE: true || false = true */
 ```
 
 ## 17.4 Common Mistakes
@@ -1334,10 +1381,19 @@ a: $("hello" == "world")   /* may not work as expected */
 
 > Current CCO comparison operators mainly support numeric types (Integer and Float).
 
-## 17.5 Summary
+## 17.5 Ternary Operator
+
+You can also use the ternary operator `? :` for simple conditional logic:
+
+```cco
+status: $(is_active ? "online" : "offline")
+```
+
+## 17.6 Summary
 
 - Comparison: `==` `!=` `<` `>` `<=` `>=`
 - Logical: `&&` `||` `!`
+- Ternary Operator: `? :`
 - Results are always boolean
 
 Next chapter -- the coalescing operator.
@@ -1352,12 +1408,12 @@ After this chapter you will be able to handle "use default if None" scenarios gr
 
 You have a config value that might be `None` (empty). You want: if it has a value, use it; if it's `None`, use a fallback.
 
-## 18.2 The Coalescing Operator `|`
+## 18.2 The Coalescing Operator `??`
 
-CCO uses the **single pipe `|`** as the coalescing operator:
+CCO uses the **double question mark `??`** as the coalescing operator:
 
 ```
-left | right
+left ?? right
 ```
 
 **If the left value is not `None`, take the left; otherwise take the right.**
@@ -1365,23 +1421,23 @@ left | right
 ## 18.3 Examples
 
 ```cco
-    a: $(None | 42),    /* NOTE: None is discarded, result is 42 */
-    b: $(10 | 99),      /* NOTE: 10 is not None, result is 10 */
-    c: $(None | None | 5)  /* NOTE: chain: result is 5 */
+a: $(None ?? 42),    /* NOTE: None is discarded, result is 42 */
+b: $(10 ?? 99),      /* NOTE: 10 is not None, result is 10 */
+c: $(None ?? None ?? 5)  /* NOTE: chain: result is 5 */
 
-    port: Integer = None,    /* NOTE: default is None */
+port: Integer = None,    /* NOTE: default is None */
 
-    /* NOTE: Inside a constructor: */
-    /* NOTE: port | fallback_port -> use port if set, otherwise 8080 */
+/* NOTE: Inside a constructor: */
+/* NOTE: port ?? fallback_port -> use port if set, otherwise 8080 */
 
-    a: $(true || false),    /* NOTE: -> true (boolean) */
-    b: $(None | 42)         /* NOTE: -> 42 (integer) */
+a: $(true || false),    /* NOTE: -> true (boolean) */
+b: $(None ?? 42)         /* NOTE: -> 42 (integer) */
 ```
 
-## 18.6 Summary
+## 18.4 Summary
 
-- `left | right`: if left is not None, use left; otherwise use right
-- Can be chained: `$a | $b | $c`
+- `left ?? right`: if left is not None, use left; otherwise use right
+- Can be chained: `$a ?? $b ?? $c`
 - Different from `||` (logical OR)
 
 Next chapter -- constructors.
@@ -1573,7 +1629,7 @@ $function.#compute<a: Integer, b: Integer>: Integer (
 
 ```cco
 $function.#max<a: Integer, b: Integer>: Integer (
-    $return<Integer>($($(a > b) | a) && $(a | b)))
+    $return<Integer>($(a > b ? a : b))
 )
 ```
 
@@ -1640,6 +1696,8 @@ Next chapter -- appendix: complete grammar reference.
 
 <!-- 22-grammar/readme.md -->
 # Chapter 22: Complete Grammar Reference
+
+> If you don't need to know the grammar definition, you can skip it.
 
 This is the full CCO grammar specification in EBNF-like notation. Useful for quick reference.
 
@@ -1745,7 +1803,6 @@ Param      ::= Identifier ":" TypeExpr | "_$" digits ":" TypeExpr
 
 Signature  ::= [ParamsThen] [":" TypeExpr | "->" TypeExpr]     (sugar, may be empty)
 ParamsThen ::= "<" ParamList ">" | ":" "(" ParamList ")" | "(" ParamList ")"
-```
 
 Body       ::= (Stmt ("," Stmt)* ","?)? [Expr]
 Stmt       ::= Bind | Assign | Return | ExprStmt
@@ -1785,22 +1842,25 @@ Additions:
 ## 22.8 Expressions
 
 ```
-Expr       ::= LiteralExpr | Identifier | "$this"
+Expr       ::= LiteralExpr | ArrayLiteral | MapLiteral | Identifier | "$this"
              | "(" Expr ")"               (compound $)
              | OpExpr
              | CallExpr
 
 OpExpr     ::= Expr BinaryOp Expr
              | UnaryOp Expr
-             | Expr "|" Expr              (coalesce)
+             | Expr "??" Expr             (coalesce)
+             | Expr "?" Expr ":" Expr     (ternary)
 
-BinaryOp   ::= "+" | "-" | "*" | "/"
+BinaryOp   ::= "+" | "-" | "*" | "/" | "**"
              | "==" | "!=" | "<" | ">" | "<=" | ">="
              | "&&" | "||"
+             | "|" | "&" | "^"
 
-UnaryOp    ::= "!"
+UnaryOp    ::= "!" | "~"
 
 CallExpr   ::= "$format" "(" Expr ")"
+             | "$include" "(" StringLiteral ")"                     (merge)
              | "#" Identifier "(" Args ")"                           (instantiate)
              | "#" Identifier "(." Field ":" Value ("," Field ":")* ")"  (named inst)
              | "#" Identifier ":" Identifier "(" Args ")"           (static call via #)
@@ -2039,8 +2099,6 @@ The [learn/source/](source/) directory contains complete `.cco` files correspond
 
 - No software installation needed to read the tutorial
 - Running the examples requires the libcco library (see `Readme.md`)
-
-
 <!-- source/README.md -->
 # Source Files
 
@@ -2056,5 +2114,3 @@ This directory contains complete `.cco` example files referenced by the tutorial
 | `full_demo.cco` | Comprehensive | Complete config with all features |
 
 All files can be parsed with `cco_parse_full()`.
-
-

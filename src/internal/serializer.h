@@ -9,6 +9,7 @@ typedef struct
     bool pretty;        /* True for pretty print, false for compact */
     int indent_spaces;  /* Number of spaces per indentation level */
     int current_indent; /* Current indentation depth */
+    int depth;          /* Current recursion depth */
     cco_strbuf_t* out;  /* Output string buffer */
 } cco_serializer_context_t;
 

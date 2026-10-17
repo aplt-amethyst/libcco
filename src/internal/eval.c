@@ -149,7 +149,7 @@ cco_object_t* cco_eval_expr(cco_parser_context_t* ctx, cco_expr_t* expr) {
                     if (start <= end) end++;
                     else end--;
                 }
-                size_t count = (start <= end) ? (end - start) : (start - end);
+                size_t count = (start <= end) ? (size_t)(end - start) : (size_t)(start - end);
                 if (count > 10000) {
                     /* OOM Threshold! Return empty or error. */
                 } else {

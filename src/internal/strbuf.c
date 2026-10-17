@@ -71,15 +71,19 @@ cco_error_t cco_strbuf_append(cco_strbuf_t* sb, const char* str, size_t len)
         return CCO_ERR_OUT_OF_RANGE;
     }
 
-    cco_error_t err = cco_strbuf_ensure_capacity(sb, sb->length + len + 1);
-    if (err != CCO_OK)
+    if (sb->capacity < sb->length + len + 1)
     {
-        return err;
+        cco_error_t err = cco_strbuf_ensure_capacity(sb, sb->length + len + 1);
+        if (err != CCO_OK)
+        {
+            return err;
+        }
     }
 
     /* Append */
-    snprintf(sb->data + sb->length, len + 1, "%.*s", (int)len, str);
+    memcpy(sb->data + sb->length, str, len);
     sb->length += len;
+    sb->data[sb->length] = '\0';
 
     return CCO_OK;
 }

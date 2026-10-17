@@ -61,6 +61,7 @@ endif
 CC       ?= cc
 CXX      ?= c++
 AR       ?= ar
+NM       ?= nm
 CSTD     ?= c11
 CXXSTD   ?= c++17
 WARNING_FLAGS ?= -Wall -Wextra -Wpedantic
@@ -102,6 +103,11 @@ CXX_SRCS  := $(filter %.cc %.cpp %.cxx,$(SRCS))
 IS_LIBRARY := $(if $(MAIN_SRCS),0,1)
 LD         := $(if $(CXX_SRCS),$(CXX),$(CC))
 
+ifeq ($(IS_LIBRARY),1)
+override CFLAGS   += -fPIC -fvisibility=hidden -DCCO_EXPORTS
+override CXXFLAGS += -fPIC -fvisibility=hidden -DCCO_EXPORTS
+endif
+
 MODE ?= debug
 ifeq ($(MODE),release)
 OPT := $(OPT_RELEASE)
@@ -113,8 +119,12 @@ OBJ_DIR := $(BUILD_DIR)/$(MODE)/obj
 OBJS    := $(patsubst $(SRC_DIR)/%,$(OBJ_DIR)/%.o,$(SRCS))
 DEPS    := $(OBJS:.o=.d)
 
-TARGET_OF = $(BUILD_DIR)/$(1)/$(if $(filter 1,$(IS_LIBRARY)),lib$(BIN).a,$(BIN))
-TARGET    := $(call TARGET_OF,$(MODE))
+TARGET_OF        = $(BUILD_DIR)/$(1)/$(if $(filter 1,$(IS_LIBRARY)),lib$(BIN).a,$(BIN))
+SHARED_TARGET_OF = $(BUILD_DIR)/$(1)/$(if $(filter 1,$(IS_LIBRARY)),libcco.so,lib$(BIN).so)
+
+TARGET        := $(call TARGET_OF,$(MODE))
+STATIC_TARGET := $(TARGET)
+SHARED_TARGET := $(call SHARED_TARGET_OF,$(MODE))
 
 # --- object rules -----------------------------------------------------------
 $(OBJ_DIR)/%.c.o: $(SRC_DIR)/%.c
@@ -138,15 +148,21 @@ $(OBJ_DIR)/%.cxx.o: $(SRC_DIR)/%.cxx
 	@$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(WARNING_FLAGS) -std=$(CXXSTD) $(OPT) -MMD -MP -c $< -o $@
 
 ifeq ($(IS_LIBRARY),1)
-LINK = $(AR) rcs $@ $^
-else
-LINK = $(LD) $^ $(LDFLAGS) $(LDLIBS) -o $@
-endif
+$(STATIC_TARGET): $(OBJS)
+	@mkdir -p $(dir $@)
+	@$(STEP) "link static $@"
+	@$(AR) rcs $@ $^
 
+$(SHARED_TARGET): $(OBJS)
+	@mkdir -p $(dir $@)
+	@$(STEP) "link shared $@"
+	@$(CC) -shared -o $@ $^ $(LDFLAGS) -lm
+else
 $(TARGET): $(OBJS)
 	@mkdir -p $(dir $@)
 	@$(STEP) "link $@"
-	@$(LINK)
+	@$(LD) $^ $(LDFLAGS) $(LDLIBS) -o $@
+endif
 
 -include $(DEPS)
 
@@ -155,7 +171,7 @@ $(TARGET): $(OBJS)
 # ============================================================================
 
 .DEFAULT_GOAL := help
-.PHONY: help build build.debug build.release run examples tests clean docs lint install uninstall
+.PHONY: all help build build.debug build.release run examples tests clean docs lint install uninstall check-symbols benchmarks benchmark
 
 ##@ General
 
@@ -177,15 +193,16 @@ help: ## Show this help
 
 ##@ Build
 
+all: $(if $(filter 1,$(IS_LIBRARY)),$(STATIC_TARGET) $(SHARED_TARGET),$(TARGET)) ## Build all library targets (static and shared)
+	@$(OK) "built targets for MODE=$(MODE)"
+
 build: build.debug ## Build debug binary (alias of build.debug)
 
 build.debug: ## Compile with debug flags
-	@$(MAKE) --no-print-directory $(call TARGET_OF,debug) MODE=debug
-	@$(OK) "$(call TARGET_OF,debug)"
+	@$(MAKE) --no-print-directory all MODE=debug
 
 build.release: ## Compile with release flags
-	@$(MAKE) --no-print-directory $(call TARGET_OF,release) MODE=release
-	@$(OK) "$(call TARGET_OF,release)"
+	@$(MAKE) --no-print-directory all MODE=release
 
 ##@ Run
 
@@ -197,7 +214,7 @@ run: build.debug ## Run the debug binary (ARGS="..." to pass arguments)
 		$(BUILD_DIR)/debug/$(BIN) $(ARGS); \
 	fi
 
-examples: ## Build one example: make examples name=<file>
+examples: build.debug ## Build one example: make examples name=<file>
 	@if [ -z "$(name)" ]; then \
 		printf 'usage: make examples name=<file>\n\n'; \
 		printf 'available:\n'; \
@@ -210,10 +227,37 @@ examples: ## Build one example: make examples name=<file>
 	comp="$(CC)"; case "$$src" in *.c) ;; *) comp="$(CXX)";; esac; \
 	mkdir -p $(BUILD_DIR)/examples; \
 	$(STEP) "build $$src"; \
-	$$comp $(CPPFLAGS) $(WARNING_FLAGS) $(OPT) $$src $(BUILD_DIR)/debug/liblibcco.a $(LDFLAGS) $(LDLIBS) -o $(BUILD_DIR)/examples/$(name); \
+	$$comp $(CPPFLAGS) -DCCO_STATIC $(WARNING_FLAGS) $(OPT) $$src $(BUILD_DIR)/debug/liblibcco.a $(LDFLAGS) $(LDLIBS) -o $(BUILD_DIR)/examples/$(name) || { $(ERR) "example build failed"; exit 1; }; \
 	$(OK) "$(BUILD_DIR)/examples/$(name)"
 
 ##@ Quality
+
+check-symbols: $(SHARED_TARGET) ## Validate exported symbols in shared library
+	@$(STEP) "checking exported symbols in $(SHARED_TARGET)"
+	@if ! command -v $(NM) >/dev/null 2>&1; then \
+		$(ERR) "$(NM) not found"; exit 1; \
+	fi
+	@symbols=$$($(NM) -D --defined-only $(SHARED_TARGET) 2>/dev/null | awk '{print $$NF}' | sort); \
+	count=$$(echo "$$symbols" | grep -c . || true); \
+	if [ "$$count" -ne 21 ]; then \
+		$(ERR) "expected exactly 21 exported symbols, found $$count"; \
+		echo "$$symbols"; \
+		exit 1; \
+	fi; \
+	expected="cco_arena_free cco_arena_new cco_arena_reset cco_array_get_count cco_array_get_item cco_clear_diagnostics cco_get_last_error cco_map_get_by_key cco_map_get_count cco_map_get_key cco_map_get_value cco_object_get_boolean cco_object_get_float cco_object_get_integer cco_object_get_string cco_object_get_type cco_object_release cco_object_retain cco_parse_options_init cco_parse_string cco_serialize_to_string"; \
+	for sym in $$expected; do \
+		if ! echo "$$symbols" | grep -qx "$$sym"; then \
+			$(ERR) "missing expected symbol: $$sym"; \
+			exit 1; \
+		fi; \
+	done; \
+	for sym in $$symbols; do \
+		if ! echo " $$expected " | grep -q " $$sym "; then \
+			$(ERR) "leaked unexpected symbol: $$sym"; \
+			exit 1; \
+		fi; \
+	done; \
+	$(OK) "verified exactly 21 public symbols and 0 internal leaks in $(SHARED_TARGET)"
 
 tests: build.debug ## Build and run the test suite
 	@if [ -f $(TEST_DIR)/Makefile ]; then \
@@ -256,6 +300,30 @@ lint: ## Run static analysis on the sources
 		$(ERR) "no linter found (install cppcheck or clang-tidy)"; exit 1; \
 	fi
 
+##@ Benchmarks
+
+BENCH_DIR   := benchmarks
+BENCH_BUILD := $(BUILD_DIR)/release/benchmarks
+
+$(BENCH_BUILD)/bench_parse: $(BENCH_DIR)/bench_parse.c $(call TARGET_OF,release)
+	@mkdir -p $(BENCH_BUILD)
+	@$(STEP) "build bench_parse"
+	@$(CC) $(CPPFLAGS) -DCCO_STATIC $(WARNING_FLAGS) -std=$(CSTD) $(OPT_RELEASE) $< $(call TARGET_OF,release) $(LDFLAGS) -lm -o $@
+
+$(BENCH_BUILD)/bench_serialize: $(BENCH_DIR)/bench_serialize.c $(call TARGET_OF,release)
+	@mkdir -p $(BENCH_BUILD)
+	@$(STEP) "build bench_serialize"
+	@$(CC) $(CPPFLAGS) -DCCO_STATIC $(WARNING_FLAGS) -std=$(CSTD) $(OPT_RELEASE) $< $(call TARGET_OF,release) $(LDFLAGS) -lm -o $@
+
+benchmarks: build.release $(BENCH_BUILD)/bench_parse $(BENCH_BUILD)/bench_serialize ## Build and run benchmark suite
+	@$(STEP) "run bench_parse"
+	@$(BENCH_BUILD)/bench_parse $(ARGS)
+	@$(STEP) "run bench_serialize"
+	@$(BENCH_BUILD)/bench_serialize $(ARGS)
+	@$(OK) "benchmarks complete"
+
+benchmark: benchmarks ## Alias of benchmarks
+
 ##@ Documentation
 
 docs: ## Generate API documentation with Doxygen
@@ -271,7 +339,9 @@ install: build.release ## Install artifacts under $(DESTDIR)$(PREFIX)
 	@if [ "$(IS_LIBRARY)" = "1" ]; then \
 		install -d $(DESTDIR)$(PREFIX)/lib; \
 		install -m 644 $(call TARGET_OF,release) $(DESTDIR)$(PREFIX)/lib/; \
+		install -m 755 $(call SHARED_TARGET_OF,release) $(DESTDIR)$(PREFIX)/lib/; \
 		$(OK) "$(DESTDIR)$(PREFIX)/lib/$(notdir $(call TARGET_OF,release))"; \
+		$(OK) "$(DESTDIR)$(PREFIX)/lib/$(notdir $(call SHARED_TARGET_OF,release))"; \
 	else \
 		install -d $(DESTDIR)$(PREFIX)/bin; \
 		install -m 755 $(call TARGET_OF,release) $(DESTDIR)$(PREFIX)/bin/$(BIN); \
@@ -286,6 +356,7 @@ install: build.release ## Install artifacts under $(DESTDIR)$(PREFIX)
 uninstall: ## Remove installed artifacts
 	@rm -f $(DESTDIR)$(PREFIX)/bin/$(BIN)
 	@rm -f $(DESTDIR)$(PREFIX)/lib/lib$(BIN).a
+	@rm -f $(DESTDIR)$(PREFIX)/lib/libcco.so
 	@rm -rf $(DESTDIR)$(PREFIX)/include/$(PROJECT)
 	@$(OK) "uninstalled $(PROJECT)"
 
