@@ -39,10 +39,13 @@ static inline void* fast_arena_alloc(cco_arena_t* restrict a, size_t n) {
     return cco_arena_alloc(a, n);
 }
 
+#ifdef CCO_ENABLE_ZERO_COPY
 static inline void* fast_arena_alloc_obj(cco_arena_t* restrict a) {
     return fast_arena_alloc(a, sizeof(cco_object_t));
 }
+#endif
 
+#ifdef CCO_ENABLE_FAST
 static inline cco_error_t fast_map_append(cco_arena_t* arena, cco_object_t* map, const char* key, size_t klen, cco_object_t* value) {
     if (arena && (map->flags & 1)) {
         if (map->as.map.capacity == 0) {
@@ -70,6 +73,7 @@ static inline cco_error_t fast_map_append(cco_arena_t* arena, cco_object_t* map,
     }
     return cco_map_append_fast_len(map, key, klen, value);
 }
+#endif
 
 static inline cco_error_t fast_array_append(cco_arena_t* arena, cco_object_t* arr, cco_object_t* item) {
     if (arena && (arr->flags & 1)) {
@@ -316,14 +320,18 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
         ctx->last_error = CCO_ERR_PARSE; return NULL;
     }
     
-    cco_scope_t method_scope;
+    cco_scope_t* method_scope = malloc(sizeof(cco_scope_t));
+    if (!method_scope) {
+        ctx->last_error = CCO_ERR_NO_MEMORY;
+        return NULL;
+    }
     if (ctx->scope) {
-        cco_scope_init(&method_scope, ctx->scope);
+        cco_scope_init(method_scope, ctx->scope);
     } else {
-        cco_scope_init(&method_scope, NULL);
+        cco_scope_init(method_scope, NULL);
     }
     cco_scope_t* old_scope = ctx->scope;
-    ctx->scope = &method_scope;
+    ctx->scope = method_scope;
 
     if (ctx->current_token.type == CCO_TOK_LT) {
         advance_token(ctx); /* skip < */
@@ -350,8 +358,8 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
                 }
                 
                 bool found = false;
-                for (size_t i = 0; i < method_scope.count; ++i) {
-                    if (strcmp(method_scope.entries[i].name, pname) == 0) { found = true; break; }
+                for (size_t i = 0; i < method_scope->count; ++i) {
+                    if (strcmp(method_scope->entries[i].name, pname) == 0) { found = true; break; }
                 }
                 
                 if (found) {
@@ -363,7 +371,7 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
                 /* create PARAM value for parse time lookup */
                 cco_object_t* arg_val = fast_create_object(ctx, CCO_TYPE_PARAM);
                 if (arg_val) arg_val->as.param.name = strdup(pname);
-                cco_scope_bind(&method_scope, pname, arg_val);
+                cco_scope_bind(method_scope, pname, arg_val);
                 /* bind takes ownership */
                 free(pname);
             } else {
@@ -378,7 +386,8 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
     }
     
     if (ctx->last_error != CCO_OK) {
-        cco_scope_destroy(&method_scope);
+        cco_scope_destroy(method_scope);
+        free(method_scope);
         ctx->scope = old_scope;
         return NULL;
     }
@@ -387,7 +396,8 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
     if (ctx->current_token.type == CCO_TOK_IDENTIFIER) advance_token(ctx); /* RetType */
     
     if (ctx->current_token.type != CCO_TOK_LPAREN) {
-        cco_scope_destroy(&method_scope);
+        cco_scope_destroy(method_scope);
+        free(method_scope);
         ctx->scope = old_scope;
         return NULL;
     }
@@ -450,7 +460,8 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
         }
     }
     
-    cco_scope_destroy(&method_scope);
+    cco_scope_destroy(method_scope);
+    free(method_scope);
     ctx->scope = old_scope;
     
     return NULL;
