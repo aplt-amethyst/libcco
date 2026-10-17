@@ -79,7 +79,7 @@ $(BENCH_BIN): $(BENCH_OBJ) $(LIBCCO_REL)
 
 $(TARGET_DIR)/%.o: %.c | dirs
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $(OPT) -c $< -o $@ -lm
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(OPT) -c $< -o $@
 
 $(LIBCCO):
 	$(MAKE) -C .. build.debug

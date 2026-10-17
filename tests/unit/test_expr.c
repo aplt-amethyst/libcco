@@ -17,7 +17,7 @@ void test_expr(void) {
     
     cco_object_t* a = cco_map_get_by_key(obj, "a");
     if (!a || a->type != CCO_TYPE_INTEGER || a->as.integer != 70) {
-        printf("Test a failed: %lld\\n", a ? a->as.integer : -1);
+        printf("Test a failed: %lld\n", (long long)(a ? a->as.integer : -1));
         return;
     }
     
