@@ -226,7 +226,7 @@ static cco_error_t serialize_recursive_inner(const cco_object_t* obj,
         err = cco_strbuf_append(ctx->out, "(", 1);
         if (err != CCO_OK)
             return err;
-        if (ctx->pretty && obj->as.array.count > 0)
+        if (ctx->pretty)
         {
             cco_strbuf_append(ctx->out, "\n", 1);
             ctx->current_indent += ctx->indent_spaces;
@@ -250,7 +250,7 @@ static cco_error_t serialize_recursive_inner(const cco_object_t* obj,
                 cco_strbuf_append(ctx->out, "\n", 1);
             }
         }
-        if (ctx->pretty && obj->as.array.count > 0)
+        if (ctx->pretty)
         {
             ctx->current_indent -= ctx->indent_spaces;
             print_indent(ctx);

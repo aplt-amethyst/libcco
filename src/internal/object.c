@@ -383,7 +383,7 @@ cco_error_t cco_array_append(cco_object_t* arr, cco_object_t* item)
         size_t new_cap =
             arr->as.array.capacity == 0 ? 8 : arr->as.array.capacity * 2;
         cco_object_t** new_items = NULL;
-        if (arr->as.array.capacity == 0 && new_cap == 8) {
+        if (arr->as.array.capacity == 0) {
             new_items = cco_fast_alloc(8 * sizeof(cco_object_t*));
         } else {
             new_items = realloc(arr->as.array.items, new_cap * sizeof(cco_object_t*));
@@ -436,7 +436,7 @@ cco_error_t cco_map_append_fast_len(cco_object_t* map, const char* key, size_t k
         size_t new_cap = map->as.map.capacity == 0 ? 8 : map->as.map.capacity * 2;
         char** new_keys = NULL;
         cco_object_t** new_vals = NULL;
-        if (map->as.map.capacity == 0 && new_cap == 8) {
+        if (map->as.map.capacity == 0) {
             new_keys = cco_fast_alloc(8 * sizeof(char*));
             new_vals = cco_fast_alloc(8 * sizeof(cco_object_t*));
         } else {
@@ -489,7 +489,7 @@ cco_error_t cco_map_insert(cco_object_t* map, const char* key,
         char** new_keys = NULL;
         cco_object_t** new_vals = NULL;
         uint32_t* new_hashes = NULL;
-        if (map->as.map.capacity == 0 && new_cap == 8) {
+        if (map->as.map.capacity == 0) {
             new_keys = cco_fast_alloc(8 * sizeof(char*));
             new_vals = cco_fast_alloc(8 * sizeof(cco_object_t*));
             new_hashes = cco_fast_alloc(8 * sizeof(uint32_t));
@@ -536,7 +536,7 @@ cco_error_t cco_tmpl_inst_insert(cco_object_t* inst, const char* key, cco_object
         char** new_keys = NULL;
         cco_object_t** new_vals = NULL;
         uint32_t* new_hashes = NULL;
-        if (inst->as.tmpl_inst.fields.capacity == 0 && new_cap == 8) {
+        if (inst->as.tmpl_inst.fields.capacity == 0) {
             new_keys = cco_fast_alloc(8 * sizeof(char*));
             new_vals = cco_fast_alloc(8 * sizeof(cco_object_t*));
             new_hashes = cco_fast_alloc(8 * sizeof(uint32_t));
