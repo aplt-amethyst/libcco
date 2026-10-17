@@ -11,9 +11,9 @@ void cco_symtab_init(cco_symtab_t* symtab, cco_arena_t* arena)
 {
     if (symtab)
     {
+        memset(symtab, 0, sizeof(*symtab));
         cco_intern_table_init(&symtab->aliases, arena);
         cco_intern_table_init(&symtab->enums, arena);
-        symtab->templates.entries = NULL; symtab->templates.count = 0; symtab->templates.capacity = 0;
         symtab->arena = arena;
     }
 }
