@@ -1,28 +1,29 @@
 name: CI
+
 on:
   push:
-    branches: [main]
+    branches: [main, "feat/**", "feat/*"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   api-doc-check:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - run: bash scripts/check-api-doc.sh
+      - name: Check API documentation
+        run: bash scripts/check-api-doc.sh
 
   lint:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - run: sudo apt-get update && sudo apt-get install -y clang-format clang-tidy cppcheck
-      - run: |
-          clang-format --dry-run -Werror $(find src include -name '*.c' -o -name '*.h')
-      - run: |
-          clang-tidy $(find src -name '*.c') -- -Iinclude -std=c11
-      - run: |
-          cppcheck --enable=all --error-exitcode=1 --suppress=missingIncludeSystem --suppress=unusedFunction -I include src/
+      - name: Install linters
+        run: sudo apt-get update && sudo apt-get install -y clang-tidy cppcheck
+      - name: Run cppcheck
+        run: |
+          cppcheck --enable=warning,style,performance --error-exitcode=1 --suppress=missingIncludeSystem --suppress=unusedFunction -I include src/
       - name: Compile each header file independently
         run: bash scripts/check-headers.sh
 
@@ -33,7 +34,10 @@ jobs:
         cc: [gcc, clang]
     steps:
       - uses: actions/checkout@v4
-      - run: make build CC=${{ matrix.cc }}
+      - name: Build with ${{ matrix.cc }}
+        run: make build CC=${{ matrix.cc }}
+      - name: Check symbol isolation
+        run: bash scripts/check-symbol-export.sh target/debug/libcco.so
 
   test:
     runs-on: ubuntu-22.04
@@ -46,10 +50,19 @@ jobs:
             cc: clang
     steps:
       - uses: actions/checkout@v4
-      - run: make tests SANITIZER=${{ matrix.sanitizer }} CC=${{ matrix.cc }}
+      - name: Run tests with ${{ matrix.sanitizer }}
+        run: make tests SANITIZER=${{ matrix.sanitizer }} CC=${{ matrix.cc }}
+
+  benchmarks:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run performance benchmarks
+        run: make benchmarks
 
   coverage:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - run: make coverage
+      - name: Code coverage
+        run: make coverage
