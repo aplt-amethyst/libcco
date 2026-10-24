@@ -5,12 +5,20 @@
 #include <stddef.h>
 #include "cnt/cco_export.h"
 
+/*
+ * Compile-time feature flags recognized by libcco build configuration:
+ * CCO_ENABLE_COMMENT_PRESERVE, CCO_ENABLE_CONSTRUCTORS, CCO_ENABLE_ENV,
+ * CCO_ENABLE_ERROR_RECOVERY, CCO_ENABLE_EVAL, CCO_ENABLE_FAST,
+ * CCO_ENABLE_FORMAT, CCO_ENABLE_INCLUDE, CCO_ENABLE_STATIC_CALLS,
+ * CCO_ENABLE_STRICT_SAFETY, CCO_ENABLE_ZERO_COPY.
+ */
+
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
-typedef struct
+typedef struct cco_parse_options_s
 {
     size_t max_depth;
     size_t max_string_length;
@@ -26,50 +34,17 @@ typedef struct
     bool restrict_filesystem;
     const char* base_dir;
 
-#ifdef CCO_ENABLE_FORMAT
     bool allow_format_builtin;
-#endif
-
-#ifdef CCO_ENABLE_EVAL
     bool allow_eval;
-#endif
-
-#ifdef CCO_ENABLE_COMMENT_PRESERVE
     bool preserve_comments;
-#endif
-
-#ifdef CCO_ENABLE_ERROR_RECOVERY
     bool enable_error_recovery;
-#endif
-
-#ifdef CCO_ENABLE_ENV
     bool allow_env_builtin;
-#endif
-
-#ifdef CCO_ENABLE_STATIC_CALLS
     bool allow_static_calls;
-#endif
-
-#ifdef CCO_ENABLE_CONSTRUCTORS
     bool allow_constructors;
-#endif
-
-#ifdef CCO_ENABLE_STRICT_SAFETY
     bool strict_safety_parsing;
-#endif
-
-#ifdef CCO_ENABLE_INCLUDE
     bool allow_include;
-#endif
-
-
-#ifdef CCO_ENABLE_FAST
     bool fast_mode; /* Bypasses duplicate checks and hashes for extreme DOM parsing */
-#endif
-
-#ifdef CCO_ENABLE_ZERO_COPY
     bool zero_copy_dom;
-#endif
 } cco_parse_options_t;
 
 /* Initializes options with default values */

@@ -19,6 +19,6 @@ app: (
     version: 0.1,
     servers: (
         #Server("localhost"),
-        #SecureServer("api.example.com", PROD, "/etc/cert.pem")
+        #SecureServer(.host: "api.example.com", .mode: PROD, .cert: "/etc/cert.pem")
     )
 )

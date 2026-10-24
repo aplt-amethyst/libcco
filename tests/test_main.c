@@ -11,6 +11,7 @@ extern void test_lexer(void);
 extern void test_parser(void);
 extern void test_scope_all(void);
 extern void test_expr(void);
+extern void test_m1_all(void);
 
 int main(void) {
     printf("Starting libcco unit tests...\n");
@@ -21,6 +22,7 @@ int main(void) {
     printf("test_parser\n"); fflush(stdout); test_parser();
     printf("test_scope_all\n"); fflush(stdout); test_scope_all();
     printf("test_expr\n"); fflush(stdout); test_expr();
+    printf("test_m1_all\n"); fflush(stdout); test_m1_all();
 
     printf("========================================\n");
     printf("Tests run:    %d\n", tests_run);

@@ -431,3 +431,45 @@ Target C++11. Only the standard library is used.
 | `cco_expr_*_new` and `cco_expr_literal`, `cco_expr_identifier`, `cco_expr_binary`, `cco_expr_unary`, `cco_expr_coalesce`, `cco_expr_compound`, `cco_expr_format`, `cco_expr_env` | yes (`cco_expr_free`) |
 | `cco_expr_eval`, `cco_instantiate` | yes (`cco_object_free`) |
 | `cco_object_get`, `cco_array_get`, `cco_parse_result_*`, `cco_symbol_table_*`, `cco_template_*`, `cco_string_get`, `cco_object_template_name`, `cco_diag_get` | no (borrowed) |
+
+## Arena and Low-Level DOM Inspection API
+
+### Memory Arena API
+```c
+cco_arena_t* cco_arena_new(size_t max_limit);
+void         cco_arena_reset(cco_arena_t* arena);
+void         cco_arena_free(cco_arena_t* arena);
+```
+Memory pools manage chunked allocations across parse cycles. `cco_arena_reset` enables zero-heap allocation parsing.
+
+### Low-Level Parsing and Serialization
+```c
+cco_object_t* cco_parse_string(const char* src, size_t len, const cco_parse_options_t* opts);
+char*         cco_serialize_to_string(const cco_object_t* obj, bool pretty);
+```
+`cco_parse_string` parses an explicit buffer slice with custom options. `cco_serialize_to_string` produces a heap-allocated serialized string.
+
+### Low-Level Object Inspection & Memory
+```c
+int         cco_object_get_type(const cco_object_t* obj);
+void        cco_object_release(cco_object_t* obj);
+bool        cco_object_get_boolean(const cco_object_t* obj, bool* out_val);
+bool        cco_object_get_integer(const cco_object_t* obj, int64_t* out_val);
+bool        cco_object_get_float(const cco_object_t* obj, double* out_val);
+bool        cco_object_get_string(const cco_object_t* obj, const char** out_val, size_t* out_len);
+cco_error_t cco_get_last_error(void);
+```
+Provides type code extraction and out-pointer value extraction returning `bool` success flags. `cco_object_release` decrements refcount and frees at zero. `cco_get_last_error` queries the first recorded thread-local error code.
+
+### Low-Level Map and Array Inspection
+```c
+cco_error_t   cco_map_insert(cco_object_t* map, const char* key, cco_object_t* value);
+size_t        cco_map_get_count(const cco_object_t* obj);
+const char*   cco_map_get_key(const cco_object_t* obj, size_t index);
+cco_object_t* cco_map_get_value(const cco_object_t* obj, size_t index);
+cco_object_t* cco_map_get_by_key(const cco_object_t* obj, const char* key);
+
+size_t        cco_array_get_count(const cco_object_t* obj);
+cco_object_t* cco_array_get_item(const cco_object_t* obj, size_t index);
+```
+Index-based and key-based traversal primitives for map and array objects. `cco_map_insert` directly inserts a key-value pair.

@@ -3,32 +3,6 @@
 
 #include "parser.h"
 
-/* Operator definitions */
-typedef enum {
-    CCO_OP_NONE = 0,
-    CCO_OP_OR,      /* || */
-    CCO_OP_AND,     /* && */
-    CCO_OP_BIT_OR,  /* | */
-    CCO_OP_BIT_XOR, /* ^ */
-    CCO_OP_BIT_AND, /* & */
-    CCO_OP_EQ,      /* == */
-    CCO_OP_NEQ,     /* != */
-    CCO_OP_LT,      /* < */
-    CCO_OP_LTE,     /* <= */
-    CCO_OP_GT,      /* > */
-    CCO_OP_GTE,     /* >= */
-    CCO_OP_COALESCE,/* ?? */
-    CCO_OP_ADD,     /* + */
-    CCO_OP_SUB,     /* - */
-    CCO_OP_MUL,     /* * */
-    CCO_OP_DIV,     /* / */
-    CCO_OP_POW,     /* ** */
-    CCO_OP_NOT,     /* ! */
-    CCO_OP_BIT_NOT, /* ~ */
-    CCO_OP_NEG,     /* unary - */
-    CCO_OP_POS      /* unary + */
-} cco_op_t;
-
 typedef enum {
     CCO_EXPR_LITERAL,
     CCO_EXPR_IDENTIFIER,
@@ -38,8 +12,6 @@ typedef enum {
     CCO_EXPR_RANGE,
     CCO_EXPR_CALL
 } cco_expr_type_t;
-
-typedef struct cco_expr_s cco_expr_t;
 
 struct cco_expr_s {
     cco_expr_type_t type;

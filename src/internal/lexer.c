@@ -49,24 +49,101 @@ static inline int advance(cco_lexer_t* lexer)
     return c;
 }
 
-static cco_error_t skip_whitespace(cco_lexer_t* lexer)
+static bool is_template_or_method_hash(const cco_lexer_t* lexer)
 {
-#ifdef CCO_ENABLE_FAST
+    size_t pos = lexer->pos;
     const char* src = lexer->src;
     size_t len = lexer->src_len;
-    size_t pos = lexer->pos;
-    while (pos < len)
-    {
-        char c = src[pos];
-        if (c == ' ' || c == '\t' || c == '\r' || c == '\n')
-            pos++;
-        else
-            break;
-    }
-    lexer->pos = pos;
-    return CCO_OK;
-#endif
 
+    if (pos >= len || src[pos] != '#')
+        return false;
+
+    /* Check backward for "$function." */
+    if (pos > 0)
+    {
+        size_t b = pos;
+        while (b > 0 && (src[b - 1] == ' ' || src[b - 1] == '\t'))
+            b--;
+        if (b > 0 && src[b - 1] == '!')
+            b--;
+        while (b > 0 && (src[b - 1] == ' ' || src[b - 1] == '\t'))
+            b--;
+        if (b >= 10 && strncmp(src + b - 10, "$function.", 10) == 0)
+            return true;
+    }
+
+    size_t p = pos + 1;
+    if (p >= len)
+        return false;
+
+    /* A template or method name must begin with an alphabetic character or underscore */
+    if (!isalpha((unsigned char)src[p]) && src[p] != '_')
+        return false;
+
+    /* Scan identifier (allowing dotted names like Provider.OpenAI) */
+    while (p < len && (isalnum((unsigned char)src[p]) || src[p] == '_' || src[p] == '.'))
+    {
+        p++;
+    }
+
+    /* Skip horizontal whitespace between identifier and delimiter */
+    while (p < len && (src[p] == ' ' || src[p] == '\t'))
+    {
+        p++;
+    }
+
+    if (p >= len)
+        return false;
+
+    /* Form 1: #Identifier( ... ) */
+    if (src[p] == '(')
+        return true;
+
+    /* Form 2: #Identifier: ( ... ) or #Identifier:method( ... ) */
+    if (src[p] == ':')
+    {
+        p++;
+        while (p < len && (src[p] == ' ' || src[p] == '\t'))
+        {
+            p++;
+        }
+        if (p < len && src[p] == '(')
+            return true;
+
+        /* Check for static method: #Name:method( */
+        if (p < len && (isalpha((unsigned char)src[p]) || src[p] == '_'))
+        {
+            while (p < len && (isalnum((unsigned char)src[p]) || src[p] == '_'))
+                p++;
+            while (p < len && (src[p] == ' ' || src[p] == '\t'))
+                p++;
+            if (p < len && src[p] == '(')
+                return true;
+        }
+    }
+
+    /* Form 3: #Identifier<Generic>( ... ) */
+    if (src[p] == '<')
+    {
+        int depth = 1;
+        p++;
+        while (p < len && depth > 0)
+        {
+            if (src[p] == '<') depth++;
+            else if (src[p] == '>') depth--;
+            p++;
+        }
+        while (p < len && (src[p] == ' ' || src[p] == '\t'))
+            p++;
+        if (p < len && (src[p] == '(' || src[p] == ':'))
+            return true;
+    }
+
+    return false;
+}
+
+static cco_error_t skip_whitespace(cco_lexer_t* lexer)
+{
     while (1)
     {
         int c = peek(lexer);
@@ -78,14 +155,11 @@ static cco_error_t skip_whitespace(cco_lexer_t* lexer)
                  lexer->src[lexer->pos + 1] == '*')
         {
             /* Block comment */
-#ifdef CCO_ENABLE_COMMENT_PRESERVE
-            if (lexer->options->preserve_comments)
-            {
-                return CCO_OK; /* Let the main loop handle it as a token */
-            }
-#endif
+            size_t start_line = lexer->line;
+            size_t start_col = lexer->col;
             advance(lexer); /* skip '/' */
             advance(lexer); /* skip '*' */
+            bool closed = false;
             while (peek(lexer) != -1)
             {
                 if (peek(lexer) == '*' && lexer->pos + 1 < lexer->src_len &&
@@ -93,8 +167,33 @@ static cco_error_t skip_whitespace(cco_lexer_t* lexer)
                 {
                     advance(lexer); /* '*' */
                     advance(lexer); /* '/' */
+                    closed = true;
                     break;
                 }
+                advance(lexer);
+            }
+            if (!closed)
+            {
+                cco_diag_record(CCO_ERR_PARSE, start_line, start_col,
+                                "skip_whitespace", "Unterminated block comment");
+                return CCO_ERR_PARSE;
+            }
+        }
+        else if (c == '#')
+        {
+            /* Distinguish template instantiation (#Point(...)) from single-line comment */
+            if (is_template_or_method_hash(lexer))
+            {
+                break; /* Do not consume; let cco_lexer_next emit CCO_TOK_HASH */
+            }
+
+            /* Single-line comment: skip until '\n' or EOF */
+            while (peek(lexer) != -1 && peek(lexer) != '\n')
+            {
+                advance(lexer);
+            }
+            if (peek(lexer) == '\n')
+            {
                 advance(lexer);
             }
         }
@@ -270,7 +369,14 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
     if (!lexer || !out_token)
         return CCO_ERR_INVALID_ARG;
 
-    skip_whitespace(lexer);
+    cco_error_t ws_err = skip_whitespace(lexer);
+    if (ws_err != CCO_OK)
+    {
+        out_token->type = CCO_TOK_EOF;
+        out_token->text_ptr = NULL;
+        out_token->text_len = 0;
+        return ws_err;
+    }
 
 #ifndef CCO_ENABLE_FAST
     out_token->line = lexer->line;
@@ -278,7 +384,7 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
 #endif
 
     int c = peek(lexer);
-    if (c == -1)
+    if (c == -1 || c == '\0')
     {
         out_token->type = CCO_TOK_EOF;
         out_token->text_ptr = NULL;
@@ -432,15 +538,102 @@ cco_error_t cco_lexer_next(cco_lexer_t* lexer, cco_token_t* out_token)
     {
         size_t start = lexer->pos;
         bool is_float = false;
-        while (isalnum(peek(lexer)) || peek(lexer) == '_' || peek(lexer) == '.')
+
+        /* Check for base prefixes: hex (0x/0X), binary (0b/0B), octal (0o/0O) */
+        if (c == '0')
         {
-            if (peek(lexer) == '.') {
-                int next_char = lexer->pos + 1 < lexer->src_len ? lexer->src[lexer->pos + 1] : -1;
-                if (next_char == '.') break; // do not consume ..
-                is_float = true;
+            int next_c = (lexer->pos + 1 < lexer->src_len) ? lexer->src[lexer->pos + 1] : -1;
+            if (next_c == 'x' || next_c == 'X')
+            {
+                advance(lexer); /* '0' */
+                advance(lexer); /* 'x' or 'X' */
+                while (isxdigit(peek(lexer)) || peek(lexer) == '_')
+                {
+                    advance(lexer);
+                }
+                out_token->type = CCO_TOK_INTEGER;
+                out_token->text_ptr = lexer->src + start;
+                out_token->text_len = lexer->pos - start;
+                return CCO_OK;
             }
+            if (next_c == 'b' || next_c == 'B')
+            {
+                advance(lexer); /* '0' */
+                advance(lexer); /* 'b' or 'B' */
+                while (peek(lexer) == '0' || peek(lexer) == '1' || peek(lexer) == '_')
+                {
+                    advance(lexer);
+                }
+                out_token->type = CCO_TOK_INTEGER;
+                out_token->text_ptr = lexer->src + start;
+                out_token->text_len = lexer->pos - start;
+                return CCO_OK;
+            }
+            if (next_c == 'o' || next_c == 'O')
+            {
+                advance(lexer); /* '0' */
+                advance(lexer); /* 'o' or 'O' */
+                while ((peek(lexer) >= '0' && peek(lexer) <= '7') || peek(lexer) == '_')
+                {
+                    advance(lexer);
+                }
+                out_token->type = CCO_TOK_INTEGER;
+                out_token->text_ptr = lexer->src + start;
+                out_token->text_len = lexer->pos - start;
+                return CCO_OK;
+            }
+        }
+
+        /* Decimal digits before optional decimal point or exponent */
+        while (isdigit(peek(lexer)) || peek(lexer) == '_')
+        {
             advance(lexer);
         }
+
+        /* Decimal point (distinguish from range operator '..' and '..=') */
+        if (peek(lexer) == '.')
+        {
+            int next_char = (lexer->pos + 1 < lexer->src_len) ? lexer->src[lexer->pos + 1] : -1;
+            if (next_char != '.')
+            {
+                is_float = true;
+                advance(lexer); /* consume '.' */
+                while (isdigit(peek(lexer)) || peek(lexer) == '_')
+                {
+                    advance(lexer);
+                }
+            }
+        }
+
+        /* Scientific notation exponent (e/E optionally followed by +/- and digits) */
+        if (peek(lexer) == 'e' || peek(lexer) == 'E')
+        {
+            int after_e = (lexer->pos + 1 < lexer->src_len) ? lexer->src[lexer->pos + 1] : -1;
+            if (after_e == '+' || after_e == '-')
+            {
+                int after_sign = (lexer->pos + 2 < lexer->src_len) ? lexer->src[lexer->pos + 2] : -1;
+                if (isdigit(after_sign))
+                {
+                    is_float = true;
+                    advance(lexer); /* consume 'e' or 'E' */
+                    advance(lexer); /* consume '+' or '-' */
+                    while (isdigit(peek(lexer)) || peek(lexer) == '_')
+                    {
+                        advance(lexer);
+                    }
+                }
+            }
+            else if (isdigit(after_e))
+            {
+                is_float = true;
+                advance(lexer); /* consume 'e' or 'E' */
+                while (isdigit(peek(lexer)) || peek(lexer) == '_')
+                {
+                    advance(lexer);
+                }
+            }
+        }
+
         out_token->type = is_float ? CCO_TOK_FLOAT : CCO_TOK_INTEGER;
         out_token->text_ptr = lexer->src + start;
         out_token->text_len = lexer->pos - start;

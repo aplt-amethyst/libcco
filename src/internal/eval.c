@@ -20,8 +20,12 @@ static cco_object_t* eval_unary(cco_op_t op, cco_object_t* right) {
             res->as.floating = -right->as.floating;
         }
     } else if (op == CCO_OP_POS) {
-        if (right->type == CCO_TYPE_INTEGER || right->type == CCO_TYPE_FLOAT) {
-            res = cco_object_clone(right);
+        if (right->type == CCO_TYPE_INTEGER) {
+            res->type = CCO_TYPE_INTEGER;
+            res->as.integer = right->as.integer;
+        } else if (right->type == CCO_TYPE_FLOAT) {
+            res->type = CCO_TYPE_FLOAT;
+            res->as.floating = right->as.floating;
         }
     } else if (op == CCO_OP_BIT_NOT) {
         if (right->type == CCO_TYPE_INTEGER) {

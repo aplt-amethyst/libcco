@@ -13,9 +13,7 @@ typedef struct
     cco_strbuf_t* out;  /* Output string buffer */
 } cco_serializer_context_t;
 
-/* Serializes the object into the provided string buffer.
-   If pretty is true, uses indentation and newlines. */
-cco_error_t cco_serialize(const cco_object_t* obj, cco_strbuf_t* out_buf,
-                          bool pretty);
+cco_error_t cco_serialize_buffer(const cco_object_t* obj, cco_strbuf_t* out_buf,
+                                 bool pretty, int indent_spaces);
 
 #endif /* CNT_CCO_INTERNAL_SERIALIZER_H */

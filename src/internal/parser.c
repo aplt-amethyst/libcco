@@ -8,11 +8,16 @@
 
 #include "diag.h"
 #include "symtab.h"
+#include "inst.h"
 
 static inline void advance_token(cco_parser_context_t* ctx)
 {
     ctx->current_token = ctx->next_token;
-    cco_lexer_next(&ctx->lexer, &ctx->next_token);
+    cco_error_t lex_err = cco_lexer_next(&ctx->lexer, &ctx->next_token);
+    if (lex_err != CCO_OK && ctx->last_error == CCO_OK)
+    {
+        ctx->last_error = lex_err;
+    }
 #ifndef CCO_ENABLE_FAST
     if (ctx->options->max_steps > 0)
     {
@@ -136,19 +141,32 @@ void cco_parser_init(cco_parser_context_t* ctx, const char* src, size_t len,
         ctx->recovery_mode = false;
         ctx->scope = NULL;
         ctx->symtab = NULL;
+        ctx->owns_symtab = false;
+        ctx->inst_count = 0;
         ctx->in_expr = false;
+        ctx->in_return = false;
+        ctx->in_generic_params = false;
 
         /* Prime the tokens */
-        cco_lexer_next(&ctx->lexer, &ctx->next_token);
+        cco_error_t prime_err = cco_lexer_next(&ctx->lexer, &ctx->next_token);
+        if (prime_err != CCO_OK && ctx->last_error == CCO_OK)
+        {
+            ctx->last_error = prime_err;
+        }
         advance_token(ctx);
     }
 }
 
+void cco_parser_advance(cco_parser_context_t* ctx)
+{
+    advance_token(ctx);
+}
+
 /* Forward declarations */
 static cco_object_t* parse_value(cco_parser_context_t* ctx);
-static cco_object_t* parse_expr(cco_parser_context_t* ctx);
+cco_object_t* parse_expr(cco_parser_context_t* ctx);
 
-/* Infra-only: parse_bind implementation for Step 2 */
+/* State capture for speculative bind backtracking */
 typedef struct {
     size_t lexer_pos;
     size_t lexer_line;
@@ -211,10 +229,10 @@ static bool skip_type_expr(cco_parser_context_t* ctx) {
 
 
 /* 
- * 判据：
- * - Identifier ":" TypeExpr "=" Expr  -> OK
- * - Identifier ":" ... 但没 =          -> NOT_MATCH，静默回退
- * - Identifier ":" TypeExpr "=" 后解析出错 -> ERROR
+ * Bind parsing rules:
+ * - Identifier ":" TypeExpr "=" Expr       -> OK
+ * - Identifier ":" ... without "="         -> NOT_MATCH, silently backtrack
+ * - Identifier ":" TypeExpr "=" parse error -> ERROR
  */
 
 
@@ -226,6 +244,10 @@ cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx, cco_src_loc_t*
         }
         return PARSE_BIND_NOT_MATCH;
     }
+    
+    cco_parser_state_t initial_state;
+    save_state(ctx, &initial_state);
+
     size_t klen = ctx->current_token.text_len;
     char* name = malloc(klen + 1);
     if (!name) return PARSE_BIND_ERROR;
@@ -239,6 +261,7 @@ cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx, cco_src_loc_t*
             out_err_loc->col = ctx->current_token.col;
         }
         free(name);
+        restore_state(ctx, &initial_state);
         return PARSE_BIND_NOT_MATCH;
     }
     advance_token(ctx);
@@ -251,7 +274,7 @@ cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx, cco_src_loc_t*
             out_err_loc->line = ctx->current_token.line;
             out_err_loc->col = ctx->current_token.col;
         }
-        restore_state(ctx, &state);
+        restore_state(ctx, &initial_state);
         free(name);
         return PARSE_BIND_NOT_MATCH;
     }
@@ -292,7 +315,7 @@ cco_parse_bind_result_t cco_parse_bind(cco_parser_context_t* ctx, cco_src_loc_t*
         out_err_loc->line = ctx->current_token.line;
         out_err_loc->col = ctx->current_token.col;
     }
-    restore_state(ctx, &state);
+    restore_state(ctx, &initial_state);
     free(name);
     return PARSE_BIND_NOT_MATCH;
 }
@@ -310,13 +333,17 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
     }
     advance_token(ctx);
     
+    bool is_ctor = false;
     if (ctx->current_token.type == CCO_TOK_AT) {
+        is_ctor = true;
         advance_token(ctx); /* skip @ */
     } else if (ctx->current_token.type == CCO_TOK_HASH) {
         advance_token(ctx); /* skip # */
         if (ctx->current_token.type == CCO_TOK_IDENTIFIER) advance_token(ctx);
+    } else if (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
+        advance_token(ctx); /* skip function name */
     } else {
-        cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_function", "expected '@' or '#'");
+        cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_function", "expected '@', '#', or function name");
         ctx->last_error = CCO_ERR_PARSE; return NULL;
     }
     
@@ -335,6 +362,7 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
 
     if (ctx->current_token.type == CCO_TOK_LT) {
         advance_token(ctx); /* skip < */
+        ctx->in_generic_params = true;
         while (ctx->current_token.type != CCO_TOK_GT && ctx->current_token.type != CCO_TOK_EOF) {
             if (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
                 size_t klen = ctx->current_token.text_len;
@@ -349,12 +377,19 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
                 }
                 advance_token(ctx); /* skip : */
                 
-                /* skip TypeExpr (just identifiers for now) */
+                /* Parse parameter type annotation */
                 if (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
                     advance_token(ctx);
                 } else {
                     cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_function", "expected type after ':'");
                     ctx->last_error = CCO_ERR_PARSE; free(pname); break;
+                }
+
+                /* Optional default parameter value: param: Type = default */
+                if (ctx->current_token.type == CCO_TOK_EQ) {
+                    advance_token(ctx);
+                    cco_object_t* def_param = parse_expr(ctx);
+                    if (def_param) cco_object_release(def_param);
                 }
                 
                 bool found = false;
@@ -383,9 +418,11 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
             }
         }
         if (ctx->current_token.type == CCO_TOK_GT) advance_token(ctx);
+        ctx->in_generic_params = false;
     }
     
     if (ctx->last_error != CCO_OK) {
+        ctx->in_generic_params = false;
         cco_scope_destroy(method_scope);
         free(method_scope);
         ctx->scope = old_scope;
@@ -418,7 +455,9 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
             }
             if (ctx->current_token.type == CCO_TOK_LPAREN) {
                 advance_token(ctx);
+                ctx->in_return = true;
                 cco_object_t* expr_val = parse_expr(ctx);
+                ctx->in_return = false;
                 if (expr_val) cco_object_release(expr_val);
                 if (ctx->current_token.type == CCO_TOK_RPAREN) advance_token(ctx);
             } else {
@@ -428,33 +467,100 @@ cco_object_t* cco_parse_function(cco_parser_context_t* ctx) {
                 break;
             }
         } else if (ctx->current_token.type == CCO_TOK_KW_THIS) {
-            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
-                            "parse_function", "assign not supported in skeleton");
-            ctx->last_error = CCO_ERR_PARSE;
-            break;
+            if (!is_ctor) {
+                cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
+                                "parse_function", "cannot use '$this' in static method");
+                ctx->last_error = CCO_ERR_PARSE;
+                break;
+            }
+            advance_token(ctx); /* skip $this */
+            if (ctx->current_token.type != CCO_TOK_DOT) {
+                cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
+                                "parse_function", "expected '.' after '$this'");
+                ctx->last_error = CCO_ERR_PARSE;
+                break;
+            }
+            advance_token(ctx); /* skip . */
+
+            if (ctx->current_token.type == CCO_TOK_LPAREN) {
+                /* Bulk field assignment: $this.(field: expr, ...) */
+                advance_token(ctx); /* skip ( */
+                while (ctx->current_token.type != CCO_TOK_RPAREN && ctx->current_token.type != CCO_TOK_EOF) {
+                    if (ctx->current_token.type != CCO_TOK_IDENTIFIER) {
+                        cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
+                                        "parse_function", "expected field name in $this assignment");
+                        ctx->last_error = CCO_ERR_PARSE;
+                        break;
+                    }
+                    advance_token(ctx); /* skip field name */
+                    if (ctx->current_token.type != CCO_TOK_COLON) {
+                        cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
+                                        "parse_function", "expected ':' after field name in $this assignment");
+                        ctx->last_error = CCO_ERR_PARSE;
+                        break;
+                    }
+                    advance_token(ctx); /* skip : */
+                    cco_object_t* expr_val = parse_expr(ctx);
+                    if (expr_val) cco_object_release(expr_val);
+                    if (ctx->current_token.type == CCO_TOK_COMMA) {
+                        advance_token(ctx);
+                    }
+                }
+                if (ctx->last_error != CCO_OK) break;
+                if (ctx->current_token.type == CCO_TOK_RPAREN) {
+                    advance_token(ctx); /* skip ) */
+                }
+            } else if (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
+                /* Single assignment: $this.field = expr */
+                advance_token(ctx); /* skip field name */
+                if (ctx->current_token.type != CCO_TOK_EQ) {
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
+                                    "parse_function", "expected '=' in $this assignment");
+                    ctx->last_error = CCO_ERR_PARSE;
+                    break;
+                }
+                advance_token(ctx); /* skip = */
+                cco_object_t* expr_val = parse_expr(ctx);
+                if (expr_val) cco_object_release(expr_val);
+            } else {
+                cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
+                                "parse_function", "expected '(' or field identifier after '$this.'");
+                ctx->last_error = CCO_ERR_PARSE;
+                break;
+            }
         } else if (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
             cco_src_loc_t err_loc = {0};
             cco_parse_bind_result_t bres = cco_parse_bind(ctx, &err_loc);
             if (bres == PARSE_BIND_NOT_MATCH) {
-                cco_diag_record(CCO_ERR_PARSE, err_loc.line, err_loc.col, "parse_bind", "missing =");
-                ctx->last_error = CCO_ERR_PARSE;
-                break;
+                cco_object_t* expr_val = parse_expr(ctx);
+                if (expr_val) {
+                    cco_object_release(expr_val);
+                } else {
+                    cco_diag_record(CCO_ERR_PARSE, err_loc.line, err_loc.col, "parse_bind", "missing =");
+                    ctx->last_error = CCO_ERR_PARSE;
+                    break;
+                }
             } else if (bres == PARSE_BIND_ERROR) {
                 ctx->last_error = CCO_ERR_PARSE;
                 break;
             }
         } else {
-            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
-                            "parse_function", "unsupported statement");
-            ctx->last_error = CCO_ERR_PARSE;
-            break;
+            cco_object_t* expr_val = parse_expr(ctx);
+            if (expr_val) {
+                cco_object_release(expr_val);
+            } else {
+                cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
+                                "parse_function", "invalid expression in function body");
+                ctx->last_error = CCO_ERR_PARSE;
+                break;
+            }
         }
         
         if (ctx->current_token.type == CCO_TOK_COMMA) {
             advance_token(ctx);
         } else if (ctx->current_token.type != CCO_TOK_RPAREN && ctx->current_token.type != CCO_TOK_EOF) {
             cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, 
-                            "parse_function", "unsupported statement");
+                            "parse_function", "expected comma or closing delimiter in function body");
             ctx->last_error = CCO_ERR_PARSE;
             break;
         }
@@ -489,6 +595,16 @@ static bool is_dotted_map_key(const cco_parser_context_t* ctx)
                 pos++;
             if (pos + 1 < len)
                 pos += 2;
+            continue;
+        }
+
+        if (c == '#')
+        {
+            pos++;
+            while (pos < len && src[pos] != '\n')
+                pos++;
+            if (pos < len && src[pos] == '\n')
+                pos++;
             continue;
         }
 
@@ -547,6 +663,8 @@ static cco_object_t* parse_map(cco_parser_context_t* ctx)
             break;
         }
 
+        size_t key_line = ctx->current_token.line;
+        size_t key_col = ctx->current_token.col;
         const char* token_key_ptr = ctx->current_token.text_ptr;
         size_t token_key_len = ctx->current_token.text_len;
 
@@ -667,32 +785,7 @@ static cco_object_t* parse_map(cco_parser_context_t* ctx)
             break;
         }
 
-        cco_error_t err = CCO_OK;
-#ifdef CCO_ENABLE_FAST
-        const char* final_key_ptr = token_key_ptr;
-        size_t final_key_len = token_key_len;
-        if (has_copied_key)
-        {
-            key_buf[key_len] = '\0';
-            final_key_ptr = key_buf;
-            final_key_len = key_len;
-        }
-        err = fast_map_append(ctx->arena, obj, final_key_ptr, final_key_len, val);
-#else
-        if (has_copied_key)
-        {
-            key_buf[key_len] = '\0';
-            if (strncmp(key_buf, "$define.", 8) == 0)
-            {
-                if (ctx->symtab)
-                    cco_symtab_add_macro(ctx->symtab, key_buf + 8, val);
-            }
-            else
-            {
-                err = cco_map_insert(obj, key_buf, val);
-            }
-        }
-        else
+        if (!has_copied_key)
         {
             if (token_key_len > key_cap)
             {
@@ -704,18 +797,49 @@ static cco_object_t* parse_map(cco_parser_context_t* ctx)
                     break;
                 }
                 key_buf = heap_key_buf;
+                key_cap = token_key_len;
             }
-            memcpy(key_buf, token_key_ptr, token_key_len);
-            key_buf[token_key_len] = '\0';
-            if (strncmp(key_buf, "$define.", 8) == 0)
+            if (token_key_ptr && token_key_len > 0)
             {
-                if (ctx->symtab)
-                    cco_symtab_add_macro(ctx->symtab, key_buf + 8, val);
+                memcpy(key_buf, token_key_ptr, token_key_len);
             }
-            else
+            key_len = token_key_len;
+            has_copied_key = true;
+        }
+        key_buf[key_len] = '\0';
+
+#ifdef CCO_ENABLE_FAST
+        if (!ctx->options || !ctx->options->fast_mode)
+#endif
+        {
+            if (cco_map_has_key(obj, key_buf))
             {
-                err = cco_map_insert(obj, key_buf, val);
+                char msg[320];
+                snprintf(msg, sizeof(msg), "duplicate key '%s' in map", key_buf);
+                cco_diag_record(CCO_ERR_PARSE, key_line, key_col, "parse_map", msg);
+                ctx->last_error = CCO_ERR_PARSE;
+                cco_object_release(val);
+                if (heap_key_buf)
+                {
+                    free(heap_key_buf);
+                    heap_key_buf = NULL;
+                }
+                break;
             }
+        }
+
+        cco_error_t err = CCO_OK;
+#ifdef CCO_ENABLE_FAST
+        err = fast_map_append(ctx->arena, obj, key_buf, key_len, val);
+#else
+        if (strncmp(key_buf, "$define.", 8) == 0)
+        {
+            if (ctx->symtab)
+                cco_symtab_add_macro(ctx->symtab, key_buf + 8, val);
+        }
+        else
+        {
+            err = cco_map_insert(obj, key_buf, val);
         }
 #endif
         if (heap_key_buf)
@@ -765,7 +889,7 @@ static cco_object_t* parse_array(cco_parser_context_t* ctx)
            ctx->current_token.type != CCO_TOK_RBRACKET &&
            ctx->current_token.type != CCO_TOK_EOF)
     {
-        cco_object_t* val = parse_value(ctx);
+        cco_object_t* val = parse_expr(ctx);
         if (!val)
             break;
         cco_error_t err = fast_array_append(ctx->arena, obj, val);
@@ -854,17 +978,85 @@ static int get_binary_op_precedence(cco_token_type_t type) {
 }
 
 
-static bool check_field_type(cco_parser_context_t* ctx, cco_object_t* val, const char* expected_type, const char* field_name) {
-    if (!expected_type || val->type == CCO_TYPE_PARAM) return true;
-    const char* actual_type = cco_type_name(val->type);
-    if (strcmp(actual_type, expected_type) != 0) {
-        char msg[256];
-        snprintf(msg, sizeof(msg), "type mismatch for field '%s': expected '%s', got '%s'", field_name, expected_type, actual_type);
-        cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", msg);
-        ctx->last_error = CCO_ERR_PARSE;
-        return false;
+bool check_field_type(cco_parser_context_t* ctx, cco_object_t* val, const char* expected_type, const char* field_name) {
+    if (!expected_type || expected_type[0] == '\0' || !val) return true;
+    if (val->type == CCO_TYPE_PARAM) return true;
+
+    /* Handle nullable types (e.g. "String?", "Url?", "Any?") */
+    size_t elen = strlen(expected_type);
+    while (elen > 0 && expected_type[elen - 1] == ' ') elen--;
+    if (elen > 1 && expected_type[elen - 1] == '?') {
+        if (val->type == CCO_TYPE_NONE)
+            return true;
+        char base_type[128] = {0};
+        size_t blen = elen - 1;
+        while (blen > 0 && expected_type[blen - 1] == ' ') blen--;
+        if (blen < sizeof(base_type)) {
+            memcpy(base_type, expected_type, blen);
+            base_type[blen] = '\0';
+            return check_field_type(ctx, val, base_type, field_name);
+        }
     }
-    return true;
+
+    /* 1. Resolve typedef alias chain (e.g. Url -> String, MyAny -> Any, TaskLevel -> Level) */
+    const char* resolved_type = expected_type;
+    if (ctx && ctx->symtab) {
+        resolved_type = cco_symtab_resolve_alias(ctx->symtab, expected_type);
+    }
+
+    if (strcmp(resolved_type, "Any") == 0) {
+        return true;
+    }
+
+    /* 2. Check enum constraint: an enum field accepts CCO_TYPE_INTEGER */
+    if (ctx && ctx->symtab && cco_symtab_lookup_enum(ctx->symtab, resolved_type)) {
+        if (val->type == CCO_TYPE_INTEGER) {
+            return true;
+        }
+    }
+
+    /* 3. Direct comparison */
+    const char* actual_type = cco_type_name(val->type);
+    if (strcmp(actual_type, resolved_type) == 0) {
+        return true;
+    }
+
+    /* 4. Numeric compatibility */
+    if (strcmp(resolved_type, "Float") == 0 && val->type == CCO_TYPE_INTEGER) {
+        return true;
+    }
+
+    /* 5. Container types */
+    if (strcmp(resolved_type, "Array") == 0 && val->type == CCO_TYPE_ARRAY) {
+        return true;
+    }
+    if (strcmp(resolved_type, "Map") == 0 && val->type == CCO_TYPE_MAP) {
+        return true;
+    }
+
+    /* 6. Template instance hierarchy */
+    if (val->type == CCO_TYPE_TEMPLATE_INSTANCE && val->as.tmpl_inst.template_name) {
+        if (strcmp(val->as.tmpl_inst.template_name, resolved_type) == 0) {
+            return true;
+        }
+        if (ctx && ctx->symtab) {
+            cco_template_def_t* tdef = cco_symtab_lookup_template(ctx->symtab, val->as.tmpl_inst.template_name);
+            while (tdef && tdef->parent_name) {
+                if (strcmp(tdef->parent_name, resolved_type) == 0) {
+                    return true;
+                }
+                tdef = cco_symtab_lookup_template(ctx->symtab, tdef->parent_name);
+            }
+        }
+    }
+
+    char msg[256];
+    snprintf(msg, sizeof(msg), "type mismatch for field '%s': expected '%s', got '%s'", field_name ? field_name : "unknown", expected_type, actual_type);
+    size_t line = ctx ? ctx->current_token.line : 0;
+    size_t col = ctx ? ctx->current_token.col : 0;
+    cco_diag_record(CCO_ERR_PARSE, line, col, "check_field_type", msg);
+    if (ctx) ctx->last_error = CCO_ERR_PARSE;
+    return false;
 }
 
 static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
@@ -873,6 +1065,11 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
     
     while (1) {
         int prec = get_binary_op_precedence(ctx->current_token.type);
+        if (ctx->in_generic_params && (ctx->current_token.type == CCO_TOK_GT ||
+                                       ctx->current_token.type == CCO_TOK_GTE ||
+                                       ctx->current_token.type == CCO_TOK_RSHIFT)) {
+            prec = 0;
+        }
         if (prec < min_prec || prec == 0) {
             break;
         }
@@ -888,21 +1085,27 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
             return NULL;
         }
         
-                if (left->type == CCO_TYPE_PARAM) {
-            char msg[128];
-            snprintf(msg, sizeof(msg), "parameter '%s' cannot be used in arithmetic at parse time", left->as.param.name);
-            cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_expr", msg);
-            ctx->last_error = CCO_ERR_PARSE;
-            cco_object_release(left); cco_object_release(right);
-            return NULL;
-        }
-        if (right->type == CCO_TYPE_PARAM) {
-            char msg[128];
-            snprintf(msg, sizeof(msg), "parameter '%s' cannot be used in arithmetic at parse time", right->as.param.name);
-            cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_expr", msg);
-            ctx->last_error = CCO_ERR_PARSE;
-            cco_object_release(left); cco_object_release(right);
-            return NULL;
+                if (left->type == CCO_TYPE_PARAM || right->type == CCO_TYPE_PARAM) {
+            if (ctx->in_return) {
+                const char* pname = (left->type == CCO_TYPE_PARAM && left->as.param.name) ? left->as.param.name :
+                                    (right->type == CCO_TYPE_PARAM && right->as.param.name) ? right->as.param.name : "x";
+                char msg[128];
+                snprintf(msg, sizeof(msg), "parameter '%s' cannot be used in arithmetic at parse time", pname);
+                cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_expr", msg);
+                ctx->last_error = CCO_ERR_PARSE;
+                cco_object_release(left); cco_object_release(right);
+                return NULL;
+            }
+            cco_object_t* res = fast_create_object(ctx, CCO_TYPE_PARAM);
+            if (res) {
+                const char* pname = (left->type == CCO_TYPE_PARAM && left->as.param.name) ? left->as.param.name :
+                                    (right->type == CCO_TYPE_PARAM && right->as.param.name) ? right->as.param.name : "param";
+                res->as.param.name = strdup(pname);
+            }
+            cco_object_release(left);
+            cco_object_release(right);
+            left = res;
+            continue;
         }
         
                 if (op == CCO_TOK_QMARK) {
@@ -1134,7 +1337,7 @@ static cco_object_t* parse_expr_inner(cco_parser_context_t* ctx, int min_prec) {
     return left;
 }
 
-static cco_object_t* parse_expr(cco_parser_context_t* ctx) {
+cco_object_t* parse_expr(cco_parser_context_t* ctx) {
     return parse_expr_inner(ctx, 1);
 }
 static cco_object_t* parse_value(cco_parser_context_t* ctx)
@@ -1275,6 +1478,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
 
     switch (ctx->current_token.type)
     {
+    case CCO_TOK_PLUS:
     case CCO_TOK_MINUS:
     case CCO_TOK_TILDE:
     case CCO_TOK_NOT:
@@ -1283,6 +1487,21 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         size_t op_line = ctx->current_token.line;
         size_t op_col = ctx->current_token.col;
         advance_token(ctx);
+
+        if (un_op == CCO_TOK_MINUS && ctx->current_token.type == CCO_TOK_INTEGER) {
+            result = fast_create_object(ctx, CCO_TYPE_INTEGER);
+            if (result) {
+                char buf[128];
+                buf[0] = '-';
+                size_t clen = ctx->current_token.text_len;
+                if (clen > sizeof(buf) - 2) clen = sizeof(buf) - 2;
+                memcpy(buf + 1, ctx->current_token.text_ptr, clen);
+                buf[1 + clen] = '\0';
+                result->as.integer = cco_parse_integer_literal(buf, 1 + clen);
+            }
+            advance_token(ctx);
+            break;
+        }
         
         cco_object_t* inner = parse_value(ctx);
         if (!inner) {
@@ -1306,6 +1525,20 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
             } else {
                 char msg[256];
                 snprintf(msg, sizeof(msg), "unary minus not defined for %s", cco_type_name(inner->type));
+                cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_value", msg);
+                ctx->last_error = CCO_ERR_PARSE;
+                result = NULL;
+            }
+        } else if (un_op == CCO_TOK_PLUS) {
+            if (inner->type == CCO_TYPE_INTEGER) {
+                result = fast_create_object(ctx, CCO_TYPE_INTEGER);
+                if (result) result->as.integer = inner->as.integer;
+            } else if (inner->type == CCO_TYPE_FLOAT) {
+                result = fast_create_object(ctx, CCO_TYPE_FLOAT);
+                if (result) result->as.floating = inner->as.floating;
+            } else {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "unary plus not defined for %s", cco_type_name(inner->type));
                 cco_diag_record(CCO_ERR_PARSE, op_line, op_col, "parse_value", msg);
                 ctx->last_error = CCO_ERR_PARSE;
                 result = NULL;
@@ -1339,13 +1572,43 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
             ctx->last_error = CCO_ERR_PARSE; break;
         }
         size_t klen = ctx->current_token.text_len;
-        char* tname = malloc(klen + 1);
+        size_t cap = klen + 64;
+        if (cap < 128) cap = 128;
+        char* tname = malloc(cap);
+        if (!tname) { ctx->last_error = CCO_ERR_NO_MEMORY; break; }
         memcpy(tname, ctx->current_token.text_ptr, klen);
         tname[klen] = '\0';
+        size_t tname_len = klen;
         advance_token(ctx);
-        
+
+        while (ctx->current_token.type == CCO_TOK_DOT) {
+            advance_token(ctx); /* skip . */
+            if (ctx->current_token.type != CCO_TOK_IDENTIFIER) {
+                free(tname);
+                cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "expected identifier after '.' in template name");
+                ctx->last_error = CCO_ERR_PARSE;
+                break;
+            }
+            size_t seg_len = ctx->current_token.text_len;
+            if (tname_len + 1 + seg_len + 1 > cap) {
+                cap = (tname_len + 1 + seg_len + 1) * 2;
+                char* new_t = realloc(tname, cap);
+                if (!new_t) { free(tname); ctx->last_error = CCO_ERR_NO_MEMORY; break; }
+                tname = new_t;
+            }
+            tname[tname_len++] = '.';
+            memcpy(tname + tname_len, ctx->current_token.text_ptr, seg_len);
+            tname_len += seg_len;
+            tname[tname_len] = '\0';
+            advance_token(ctx);
+        }
+
+        if (ctx->last_error != CCO_OK) {
+            break;
+        }
+
         if (ctx->current_token.type == CCO_TOK_COLON) {
-            advance_token(ctx); /* skip : */
+            advance_token(ctx); /* skip optional : */
         }
         
         if (ctx->current_token.type != CCO_TOK_LPAREN) {
@@ -1355,34 +1618,10 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         }
         advance_token(ctx);
         
-        cco_template_def_t* def = NULL;
-        if (ctx->symtab) {
-            def = cco_symtab_lookup_template(ctx->symtab, tname);
-        }
-        if (!def) {
-            char msg[128];
-            snprintf(msg, sizeof(msg), "unknown template '%s'", tname);
-            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", msg);
-            ctx->last_error = CCO_ERR_PARSE;
-            free(tname); break;
-        }
-        
-        result = fast_create_object(ctx, CCO_TYPE_TEMPLATE_INSTANCE);
-        if (!result) { ctx->last_error = CCO_ERR_NO_MEMORY; free(tname); break; }
-        result->as.tmpl_inst.template_name = cco_intern_string(&ctx->symtab->aliases, tname, strlen(tname));
-        free(tname);
-        
-        result->as.tmpl_inst.fields.keys = NULL;
-        result->as.tmpl_inst.fields.values = NULL;
-        result->as.tmpl_inst.fields.count = 0;
-        result->as.tmpl_inst.fields.capacity = 0;
-        
         bool is_named = false;
         bool is_positional = false;
-        size_t pos_idx = 0;
-        
-        /* Keep track of provided fields to detect duplicates and missing */
-        bool provided[256] = {0}; /* assume max 256 fields for this skeleton */
+        cco_object_t* map_args = fast_create_object(ctx, CCO_TYPE_MAP);
+        cco_object_t* arr_args = fast_create_object(ctx, CCO_TYPE_ARRAY);
         
         while (ctx->current_token.type != CCO_TOK_RPAREN && ctx->current_token.type != CCO_TOK_EOF) {
             bool current_is_named = false;
@@ -1399,15 +1638,18 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                 is_named = true;
                 
                 if (ctx->current_token.type != CCO_TOK_IDENTIFIER) {
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "expected field name after '.'");
                     ctx->last_error = CCO_ERR_PARSE; break;
                 }
                 size_t flen = ctx->current_token.text_len;
                 char* fname = malloc(flen + 1);
+                if (!fname) { ctx->last_error = CCO_ERR_NO_MEMORY; break; }
                 memcpy(fname, ctx->current_token.text_ptr, flen);
                 fname[flen] = '\0';
                 advance_token(ctx);
                 
                 if (ctx->current_token.type != CCO_TOK_COLON) {
+                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "expected ':' after field name");
                     free(fname); ctx->last_error = CCO_ERR_PARSE; break;
                 }
                 advance_token(ctx);
@@ -1415,34 +1657,11 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                 cco_object_t* val = parse_expr(ctx);
                 if (!val) { free(fname); ctx->last_error = CCO_ERR_PARSE; break; }
                 
-                /* Check if field exists */
-                long fidx = -1;
-                for (size_t i = 0; i < def->field_count; ++i) {
-                    if (strcmp(def->fields[i].name, fname) == 0) { fidx = (long)i; break; }
+                if (map_args) {
+                    cco_map_set(map_args, fname, val);
                 }
-                if (fidx == -1) {
-                    char msg[128];
-                    snprintf(msg, sizeof(msg), "unknown field '%s' for template '%s'", fname, result->as.tmpl_inst.template_name);
-                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", msg);
-                    ctx->last_error = CCO_ERR_PARSE; free(fname); cco_object_release(val); break;
-                }
-                if (provided[fidx]) {
-                    char msg[128];
-                    snprintf(msg, sizeof(msg), "duplicate field '%s'", fname);
-                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", msg);
-                    ctx->last_error = CCO_ERR_PARSE; free(fname); cco_object_release(val); break;
-                }
-                
-                provided[fidx] = true;
-                
-                /* Insert into map */
-                if (!check_field_type(ctx, val, def->fields[fidx].type_name, fname)) {
-                    free(fname); cco_object_release(val); break;
-                }
-                cco_tmpl_inst_insert(result, fname, val);
-                cco_object_release(val); /* map takes ownership/ref */
+                cco_object_release(val);
                 free(fname);
-                
             } else {
                 if (is_named) {
                     cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "cannot mix positional and named arguments");
@@ -1450,23 +1669,13 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                 }
                 is_positional = true;
                 
-                if (pos_idx >= def->field_count) {
-                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", "too many arguments for template");
-                    ctx->last_error = CCO_ERR_PARSE; break;
-                }
-                
                 cco_object_t* val = parse_expr(ctx);
                 if (!val) { ctx->last_error = CCO_ERR_PARSE; break; }
                 
-                provided[pos_idx] = true;
-                
-                /* Insert into map */
-                if (!check_field_type(ctx, val, def->fields[pos_idx].type_name, def->fields[pos_idx].name)) {
-                    cco_object_release(val); break;
+                if (arr_args) {
+                    cco_array_append(arr_args, val);
                 }
-                cco_tmpl_inst_insert(result, def->fields[pos_idx].name, val);
                 cco_object_release(val);
-                pos_idx++;
             }
             
             if (ctx->current_token.type == CCO_TOK_COMMA) {
@@ -1475,7 +1684,9 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         }
         
         if (ctx->last_error != CCO_OK) {
-            cco_object_release(result);
+            if (map_args) cco_object_release(map_args);
+            if (arr_args) cco_object_release(arr_args);
+            free(tname);
             result = NULL;
             break;
         }
@@ -1484,23 +1695,22 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
             advance_token(ctx);
         }
         
-        /* Check missing fields and apply defaults */
-        for (size_t i = 0; i < def->field_count; ++i) {
-            if (!provided[i]) {
-                if (def->fields[i].default_value) {
-                    cco_tmpl_inst_insert(result, def->fields[i].name, def->fields[i].default_value);
-                } else {
-                    char msg[128];
-                    snprintf(msg, sizeof(msg), "missing field '%s' for template '%s'", def->fields[i].name, result->as.tmpl_inst.template_name);
-                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", msg);
-                    ctx->last_error = CCO_ERR_PARSE;
-                    cco_object_release(result);
-                    result = NULL;
-                    break;
-                }
-            }
+        cco_inst_context_t inst_ctx = { .inst_count = ctx->inst_count };
+        cco_error_t err = CCO_OK;
+        if (is_named) {
+            err = cco_instantiate_named(ctx, ctx->symtab, &inst_ctx, tname, map_args ? &map_args->as.map : NULL, &result);
+        } else {
+            err = cco_instantiate_positional(ctx, ctx->symtab, &inst_ctx, tname, arr_args ? &arr_args->as.array : NULL, &result);
+        }
+        ctx->inst_count = inst_ctx.inst_count;
+        if (err != CCO_OK) {
+            ctx->last_error = err;
+            result = NULL;
         }
         
+        if (map_args) cco_object_release(map_args);
+        if (arr_args) cco_object_release(arr_args);
+        free(tname);
         break;
     }
 
@@ -1519,7 +1729,6 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         if (ctx->scope) {
             found = cco_scope_lookup(ctx->scope, name);
         }
-        /* TODO: fallback to top-level symtab for enum/typedef lookup */
         if (!found && ctx->symtab) {
             found = cco_symtab_lookup_macro(ctx->symtab, name);
         }
@@ -1559,13 +1768,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         result = fast_create_object(ctx, CCO_TYPE_INTEGER);
         if (result)
         {
-            char tmp[64];
-            size_t cpy_len = ctx->current_token.text_len < 63
-                                 ? ctx->current_token.text_len
-                                 : 63;
-            memcpy(tmp, ctx->current_token.text_ptr, cpy_len);
-            tmp[cpy_len] = '\0';
-            result->as.integer = strtoll(tmp, NULL, 10);
+            result->as.integer = cco_parse_integer_literal(ctx->current_token.text_ptr, ctx->current_token.text_len);
         }
         advance_token(ctx);
         break;
@@ -1573,13 +1776,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         result = fast_create_object(ctx, CCO_TYPE_FLOAT);
         if (result)
         {
-            char tmp[64];
-            size_t cpy_len = ctx->current_token.text_len < 63
-                                 ? ctx->current_token.text_len
-                                 : 63;
-            memcpy(tmp, ctx->current_token.text_ptr, cpy_len);
-            tmp[cpy_len] = '\0';
-            result->as.floating = strtod(tmp, NULL);
+            result->as.floating = cco_parse_float_literal(ctx->current_token.text_ptr, ctx->current_token.text_len);
         }
         advance_token(ctx);
         break;
@@ -1633,7 +1830,7 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                 
                 cco_object_t* expr_val = parse_expr(&sub_ctx);
                 if (!expr_val) {
-                    ctx->last_error = sub_ctx.last_error;
+                    ctx->last_error = (sub_ctx.last_error != CCO_OK) ? sub_ctx.last_error : CCO_ERR_PARSE;
                     has_error = true;
                     break;
                 }
@@ -1645,7 +1842,16 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                     break;
                 }
                 
-                i += (size_t)(sub_ctx.current_token.text_ptr - (s_data + i)) + sub_ctx.current_token.text_len;
+                size_t consumed = 0;
+                if (sub_ctx.current_token.text_ptr >= s_data + i &&
+                    sub_ctx.current_token.text_ptr <= s_data + s_len) {
+                    consumed = (size_t)(sub_ctx.current_token.text_ptr - (s_data + i)) + sub_ctx.current_token.text_len;
+                } else if (sub_ctx.lexer.pos > 0) {
+                    consumed = sub_ctx.lexer.pos;
+                } else {
+                    consumed = 1;
+                }
+                i += (consumed > 0) ? consumed : 1;
                 
                 if (expr_val->type == CCO_TYPE_STRING) {
                     cco_strbuf_append(&sb, expr_val->as.string.data, expr_val->as.string.length);
@@ -1663,21 +1869,23 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
                 } else if (expr_val->type == CCO_TYPE_NONE) {
                     cco_strbuf_append(&sb, "none", 4);
                 } else if (expr_val->type == CCO_TYPE_PARAM) {
-                    char msg[128];
-                    snprintf(msg, sizeof(msg), "parameter '%s' cannot be interpolated at parse time", expr_val->as.param.name);
-                    cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_value", msg);
-                    ctx->last_error = CCO_ERR_PARSE;
-                    cco_object_release(expr_val);
-                    has_error = true;
-                    break;
+                    cco_strbuf_append(&sb, "$", 1);
+                    if (expr_val->as.param.name) {
+                        cco_strbuf_append(&sb, expr_val->as.param.name, strlen(expr_val->as.param.name));
+                    }
                 }
                 cco_object_release(expr_val);
             } else {
                 size_t start = i;
-                while (i < s_len && s_data[i] != '$') {
+                if (s_data[i] == '$') {
+                    cco_strbuf_append(&sb, "$", 1);
                     i++;
+                } else {
+                    while (i < s_len && s_data[i] != '$') {
+                        i++;
+                    }
+                    cco_strbuf_append(&sb, &s_data[start], i - start);
                 }
-                cco_strbuf_append(&sb, &s_data[start], i - start);
             }
         }
         
@@ -1722,7 +1930,18 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
             result = parse_array(ctx);
         }
         if (ctx->current_token.type == CCO_TOK_RPAREN)
+        {
             advance_token(ctx);
+        }
+        else
+        {
+            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line,
+                            ctx->current_token.col, "parse_value",
+                            "Expected closing ')'");
+            ctx->last_error = CCO_ERR_PARSE;
+            cco_object_release(result);
+            result = NULL;
+        }
         break;
     case CCO_TOK_LBRACE:
         if (ctx->options && !ctx->options->lenient_brackets)
@@ -1736,7 +1955,18 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         advance_token(ctx);
         result = parse_map(ctx);
         if (ctx->current_token.type == CCO_TOK_RBRACE)
+        {
             advance_token(ctx);
+        }
+        else
+        {
+            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line,
+                            ctx->current_token.col, "parse_value",
+                            "Expected closing '}'");
+            ctx->last_error = CCO_ERR_PARSE;
+            cco_object_release(result);
+            result = NULL;
+        }
         break;
     case CCO_TOK_LBRACKET:
         if (ctx->options && !ctx->options->lenient_brackets)
@@ -1750,7 +1980,18 @@ static cco_object_t* parse_value(cco_parser_context_t* ctx)
         advance_token(ctx);
         result = parse_array(ctx);
         if (ctx->current_token.type == CCO_TOK_RBRACKET)
+        {
             advance_token(ctx);
+        }
+        else
+        {
+            cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line,
+                            ctx->current_token.col, "parse_value",
+                            "Expected closing ']'");
+            ctx->last_error = CCO_ERR_PARSE;
+            cco_object_release(result);
+            result = NULL;
+        }
         break;
     default:
         cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line,
@@ -1806,16 +2047,29 @@ cco_template_def_t* cco_parse_template_decl(cco_parser_context_t* ctx) {
     char* parent_name = NULL;
     if (ctx->current_token.type == CCO_TOK_PLUS) {
         advance_token(ctx); /* skip + */
-        if (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
+        char pbuf[256] = {0};
+        size_t plen = 0;
+        while (ctx->current_token.type == CCO_TOK_IDENTIFIER) {
             size_t klen = ctx->current_token.text_len;
-            parent_name = malloc(klen + 1);
-            memcpy(parent_name, ctx->current_token.text_ptr, klen);
-            parent_name[klen] = '\0';
+            if (plen + klen + 1 < sizeof(pbuf)) {
+                memcpy(pbuf + plen, ctx->current_token.text_ptr, klen);
+                plen += klen;
+            }
             advance_token(ctx);
-        } else {
+            if (ctx->current_token.type == CCO_TOK_DOT) {
+                if (plen + 1 < sizeof(pbuf)) {
+                    pbuf[plen++] = '.';
+                }
+                advance_token(ctx);
+            } else {
+                break;
+            }
+        }
+        if (plen == 0) {
             cco_diag_record(CCO_ERR_PARSE, ctx->current_token.line, ctx->current_token.col, "parse_template", "expected parent template name");
             ctx->last_error = CCO_ERR_PARSE; return NULL;
         }
+        parent_name = strdup(pbuf);
     }
     
     if (ctx->current_token.type != CCO_TOK_COLON) {
@@ -1831,6 +2085,7 @@ cco_template_def_t* cco_parse_template_decl(cco_parser_context_t* ctx) {
     advance_token(ctx);
     
     cco_template_def_t* def = malloc(sizeof(cco_template_def_t));
+    def->name = strdup(name_buf);
     def->fields = NULL;
     def->field_count = 0;
     def->field_capacity = 0;
@@ -1905,15 +2160,17 @@ cco_template_def_t* cco_parse_template_decl(cco_parser_context_t* ctx) {
     }
     
     if (ctx->last_error != CCO_OK) {
-        for(size_t i=0; i<def->field_count; ++i) {
-            free(def->fields[i].name);
-            if(def->fields[i].type_name) free(def->fields[i].type_name);
-            if(def->fields[i].default_value) cco_object_release(def->fields[i].default_value);
-        }
-        free(def->fields);
-        if(def->parent_name) free((void*)def->parent_name);
-        free(def);
+        cco_template_def_destroy(def);
         return NULL;
+    }
+
+    if (ctx->symtab) {
+        cco_error_t terr = cco_symtab_add_template(ctx->symtab, def->name, def);
+        if (terr != CCO_OK) {
+            ctx->last_error = terr;
+            cco_template_def_destroy(def);
+            return NULL;
+        }
     }
     return def;
 }
@@ -1925,12 +2182,33 @@ cco_object_t* cco_parse_document(cco_parser_context_t* ctx)
 
     cco_object_t* root = NULL;
 
-    if (ctx->options->max_document_size > 0 &&
+    if (ctx->options && ctx->options->max_document_size > 0 &&
         ctx->lexer.src_len > ctx->options->max_document_size)
     {
         cco_diag_record(CCO_ERR_OUT_OF_RANGE, 1, 1, "cco_parse_document",
                         "Document size exceeds limit");
         ctx->last_error = CCO_ERR_OUT_OF_RANGE;
+        goto cleanup;
+    }
+
+    if (!ctx->symtab) {
+        ctx->symtab = cco_symtab_new();
+        ctx->owns_symtab = true;
+    }
+
+    cco_error_t decl_err = cco_parse_declarations(ctx, ctx->symtab);
+    if (decl_err != CCO_OK) {
+        ctx->last_error = decl_err;
+        goto cleanup;
+    }
+
+    while (ctx->current_token.type == CCO_TOK_COMMA) {
+        advance_token(ctx);
+    }
+
+    if (ctx->current_token.type == CCO_TOK_EOF) {
+        root = NULL;
+        ctx->last_error = CCO_OK;
         goto cleanup;
     }
 
@@ -1948,6 +2226,11 @@ cleanup:
     {
         cco_object_release(root);
         root = NULL;
+    }
+    if (ctx->owns_symtab && ctx->symtab) {
+        cco_symtab_free(ctx->symtab);
+        ctx->symtab = NULL;
+        ctx->owns_symtab = false;
     }
     return root;
 }

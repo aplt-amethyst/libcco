@@ -8,18 +8,15 @@
 #include <cnt/cco.h>
 #include <cnt/cco_error.h>
 
-typedef uint16_t cco_type_t;
-struct cco_arena_s; /* enum deleted */
-
-typedef struct cco_object_s cco_object_t;
+struct cco_arena_s;
 
 /* Array structure */
-typedef struct
+struct cco_array_s
 {
     cco_object_t** items;
     size_t count;
     size_t capacity;
-} cco_array_t;
+};
 
 /* Map structure (wrapper around hash table conceptually) */
 typedef struct
@@ -36,7 +33,7 @@ typedef struct
 /* Template instance */
 typedef struct
 {
-    const char* template_name;
+    char* template_name;
     cco_map_t fields;
 } cco_template_instance_t;
 
@@ -92,6 +89,9 @@ bool cco_object_equals(const cco_object_t* a, const cco_object_t* b);
 cco_error_t cco_array_append(cco_object_t* arr, cco_object_t* item);
 cco_error_t cco_map_append_fast(cco_object_t* map, const char* key, cco_object_t* value);
 cco_error_t cco_map_append_fast_len(cco_object_t* map, const char* key, size_t key_len, cco_object_t* value);
+bool cco_map_has_key(const cco_object_t* map, const char* key);
+cco_error_t cco_map_set(cco_object_t* map, const char* key,
+                        cco_object_t* value);
 cco_error_t cco_map_insert(cco_object_t* map, const char* key,
                            cco_object_t* value);
 cco_error_t cco_tmpl_inst_insert(cco_object_t* inst, const char* key, cco_object_t* value);

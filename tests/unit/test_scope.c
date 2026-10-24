@@ -250,7 +250,7 @@ static void test_parse_static_method_body_assign(void) {
     cco_object_t* obj = cco_parse_function(&ctx);
     assert(obj == NULL); 
     assert(ctx.last_error == CCO_ERR_PARSE);
-    /* Should error with "assign not supported in skeleton" */
+    /* Should error with unsupported assignment syntax */
     
     cco_scope_destroy(&root);
     cco_arena_destroy(&arena);
@@ -370,9 +370,8 @@ static void test_ident_static_method_body_return(void) {
     ctx.scope = &root;
     
     cco_object_t* obj = cco_parse_function(&ctx);
-    /* Currently parse_static_method_body only does syntax parsing and drops the return value. 
-       If it is implemented in the future to return the evaluated object, assert it here. */
-    assert(obj == NULL); /* 明确说当前只做语法拦截，值丢弃 */
+    /* Currently parse_static_method_body only performs syntax validation. */
+    assert(obj == NULL);
     assert(ctx.last_error == CCO_OK);
     
     cco_scope_destroy(&root);
@@ -460,7 +459,6 @@ static void test_ident_nested_lookup(void) {
     tests_passed++;
 }
 
-extern cco_object_t* cco_parse(cco_parser_context_t* ctx); /* To parse map/array */
 static void test_map_literal_isolation(void) {
     tests_run++; 
     const char* src = "(x: 5, y: 5)";
@@ -489,8 +487,8 @@ static void test_array_isolation(void) {
     cco_parser_init(&ctx, src, strlen(src), &opts, &arena);
     
     cco_object_t* obj = cco_parse_document(&ctx);
-    /* In standard libcco [1,2,3] might be parsed by cco_parse, depending on if it expects () vs [] */
-    /* Wait, the skeleton says: "只能解析 map 和 array。src/internal/parser.c 现在只有 351 行，只能解析 map 和 array" */
+    /* In standard libcco [1,2,3] might be parsed depending on bracket mode */
+    /* Base parser supports map and array literals */
     /* but if [] array isn't fully implemented in base parser, let's just use (1, 2, 3) which is an array in old CCO syntax */
     cco_arena_destroy(&arena);
     tests_passed++;
@@ -1241,7 +1239,7 @@ static void test_template_simple(void) {
         free(def->fields[i].name); if(def->fields[i].type_name) free(def->fields[i].type_name);
         if(def->fields[i].default_value) cco_object_release(def->fields[i].default_value);
     }
-    free(def->fields); free(def); cco_arena_destroy(&arena); tests_passed++;
+    free(def->fields); if (def->name) free(def->name); free(def); cco_arena_destroy(&arena); tests_passed++;
 }
 
 static void test_template_default_val(void) {
@@ -1260,7 +1258,7 @@ static void test_template_default_val(void) {
         free(def->fields[i].name); if(def->fields[i].type_name) free(def->fields[i].type_name);
         if(def->fields[i].default_value) cco_object_release(def->fields[i].default_value);
     }
-    free(def->fields); free(def); cco_arena_destroy(&arena); tests_passed++;
+    free(def->fields); if (def->name) free(def->name); free(def); cco_arena_destroy(&arena); tests_passed++;
 }
 
 static void test_template_no_type_default(void) {
@@ -1278,7 +1276,7 @@ static void test_template_no_type_default(void) {
         free(def->fields[i].name); if(def->fields[i].type_name) free(def->fields[i].type_name);
         if(def->fields[i].default_value) cco_object_release(def->fields[i].default_value);
     }
-    free(def->fields); free(def); cco_arena_destroy(&arena); tests_passed++;
+    free(def->fields); if (def->name) free(def->name); free(def); cco_arena_destroy(&arena); tests_passed++;
 }
 
 static void test_template_empty(void) {
@@ -1293,7 +1291,7 @@ static void test_template_empty(void) {
         free(def->fields[i].name); if(def->fields[i].type_name) free(def->fields[i].type_name);
         if(def->fields[i].default_value) cco_object_release(def->fields[i].default_value);
     }
-    free(def->fields); free(def); cco_arena_destroy(&arena); tests_passed++;
+    free(def->fields); if (def->name) free(def->name); free(def); cco_arena_destroy(&arena); tests_passed++;
 }
 
 static void test_template_dotted_name(void) {
@@ -1309,7 +1307,7 @@ static void test_template_dotted_name(void) {
         free(def->fields[i].name); if(def->fields[i].type_name) free(def->fields[i].type_name);
         if(def->fields[i].default_value) cco_object_release(def->fields[i].default_value);
     }
-    free(def->fields); free(def); free(symtab.templates.entries); cco_intern_table_destroy(&symtab.aliases); cco_arena_destroy(&arena); tests_passed++;
+    free(def->fields); if (def->name) free(def->name); free(def); free(symtab.templates.entries); cco_intern_table_destroy(&symtab.aliases); cco_arena_destroy(&arena); tests_passed++;
 }
 
 static void test_template_inheritance(void) {
@@ -1333,12 +1331,12 @@ static void test_template_inheritance(void) {
         free(def1->fields[i].name); if(def1->fields[i].type_name) free(def1->fields[i].type_name);
         if(def1->fields[i].default_value) cco_object_release(def1->fields[i].default_value);
     }
-    free(def1->fields); free(def1);
+    free(def1->fields); if (def1->name) free(def1->name); free(def1);
     for(size_t i=0; i<def2->field_count; ++i) {
         free(def2->fields[i].name); if(def2->fields[i].type_name) free(def2->fields[i].type_name);
         if(def2->fields[i].default_value) cco_object_release(def2->fields[i].default_value);
     }
-    free(def2->fields); free((void*)def2->parent_name); free(def2); free(symtab.templates.entries); cco_intern_table_destroy(&symtab.aliases); cco_arena_destroy(&arena); tests_passed++;
+    free(def2->fields); free((void*)def2->parent_name); if (def2->name) free(def2->name); free(def2); free(symtab.templates.entries); cco_intern_table_destroy(&symtab.aliases); cco_arena_destroy(&arena); tests_passed++;
 }
 
 static void test_template_inheritance_override(void) {
@@ -1362,12 +1360,12 @@ static void test_template_inheritance_override(void) {
         free(def1->fields[i].name); if(def1->fields[i].type_name) free(def1->fields[i].type_name);
         if(def1->fields[i].default_value) cco_object_release(def1->fields[i].default_value);
     }
-    free(def1->fields); free(def1);
+    free(def1->fields); if (def1->name) free(def1->name); free(def1);
     for(size_t i=0; i<def2->field_count; ++i) {
         free(def2->fields[i].name); if(def2->fields[i].type_name) free(def2->fields[i].type_name);
         if(def2->fields[i].default_value) cco_object_release(def2->fields[i].default_value);
     }
-    free(def2->fields); free((void*)def2->parent_name); free(def2); free(symtab.templates.entries); cco_intern_table_destroy(&symtab.aliases); cco_arena_destroy(&arena); tests_passed++;
+    free(def2->fields); free((void*)def2->parent_name); if (def2->name) free(def2->name); free(def2); free(symtab.templates.entries); cco_intern_table_destroy(&symtab.aliases); cco_arena_destroy(&arena); tests_passed++;
 }
 
 static void test_template_unknown_parent(void) {
@@ -1386,7 +1384,7 @@ static void test_template_unknown_parent(void) {
         free(def->fields[i].name); if(def->fields[i].type_name) free(def->fields[i].type_name);
         if(def->fields[i].default_value) cco_object_release(def->fields[i].default_value);
     }
-    free(def->fields); free((void*)def->parent_name); free(def); free(symtab.templates.entries); cco_intern_table_destroy(&symtab.aliases); cco_arena_destroy(&arena); tests_passed++;
+    free(def->fields); free((void*)def->parent_name); if (def->name) free(def->name); free(def); free(symtab.templates.entries); cco_intern_table_destroy(&symtab.aliases); cco_arena_destroy(&arena); tests_passed++;
 }
 
 static void test_expr_comparison(void) {

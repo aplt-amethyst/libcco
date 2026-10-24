@@ -15,7 +15,8 @@ extern "C"
         CCO_ERR_NOT_FOUND = -4,
         CCO_ERR_FORBIDDEN = -5,
         CCO_ERR_NO_MEMORY = -6,
-        CCO_ERR_PARSE = -7
+        CCO_ERR_PARSE = -7,
+        CCO_ERR_IO = -8
     } cco_error_t;
 
 #ifdef __cplusplus

@@ -18,6 +18,7 @@ $temp.SecureServer + Server: (
 ),
 
 /* NOTE: multi-level inheritance */
+$temp.Point: ( x: Float, y: Float ),
 $temp.Shape: ( area: Float ),
 $temp.Circle + Shape: ( radius: Float ),
 $temp.SmallCircle + Circle: ( label: String ),

@@ -26,7 +26,7 @@ fi
 # Strip /* */ block comments, then keep only lines that begin with a
 # non-space, non-`*`, non-`/` character. That leaves actual declarations
 # while dropping prose and comment continuations.
-declared=$(sed -E 's:/\*[^*]*\*/::g' "$header"     | grep -vE '^\s*(\*|//)'     | grep -oE 'cco_[a-z_]+\s*\('     | sed -E 's/[[:space:]]*\($//'     | sort -u || true)
+declared=$(sed -E 's:/\*[^*]*\*/::g' "$header"     | grep -vE '^\s*(\*|//)'     | grep -oE '\bcco_[a-z_]+\s*\('     | sed -E 's/[[:space:]]*\($//'     | sort -u || true)
 
 if [ -z "$declared" ]; then
     echo "OK: no public functions declared yet (indev stage)"
@@ -34,7 +34,7 @@ if [ -z "$declared" ]; then
 fi
 
 # Every cco_foo token mentioned anywhere in the doc counts as documented.
-documented=$(grep -oE 'cco_[a-z_]+' "$api_doc" | sort -u || true)
+documented=$(grep -oE '\bcco_[a-z_]+' "$api_doc" | sort -u || true)
 
 missing=$(comm -23 <(echo "$declared") <(echo "$documented"))
 if [ -n "$missing" ]; then

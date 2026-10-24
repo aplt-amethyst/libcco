@@ -1,3 +1,6 @@
+$enum.Language = (C),
+$temp.Builder: ( tool: String, options: String? = None ),
+
 (
     name: "libcco",
     version: "1.0.0",

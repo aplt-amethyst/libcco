@@ -167,21 +167,17 @@ static cco_expr_t* parse_prefix(cco_parser_context_t* ctx) {
     
     if (t.type == CCO_TOK_INTEGER) {
         cco_object_t* obj = cco_object_create(CCO_TYPE_INTEGER);
-        char tmp[64];
-        size_t cpy_len = t.text_len < 63 ? t.text_len : 63;
-        memcpy(tmp, t.text_ptr, cpy_len);
-        tmp[cpy_len] = '\0';
-        obj->as.integer = strtoll(tmp, NULL, 10);
+        if (obj) {
+            obj->as.integer = cco_parse_integer_literal(t.text_ptr, t.text_len);
+        }
         expr = cco_expr_new_literal(obj);
         cco_object_release(obj);
         advance(ctx);
     } else if (t.type == CCO_TOK_FLOAT) {
         cco_object_t* obj = cco_object_create(CCO_TYPE_FLOAT);
-        char tmp[64];
-        size_t cpy_len = t.text_len < 63 ? t.text_len : 63;
-        memcpy(tmp, t.text_ptr, cpy_len);
-        tmp[cpy_len] = '\0';
-        obj->as.floating = strtod(tmp, NULL);
+        if (obj) {
+            obj->as.floating = cco_parse_float_literal(t.text_ptr, t.text_len);
+        }
         expr = cco_expr_new_literal(obj);
         cco_object_release(obj);
         advance(ctx);

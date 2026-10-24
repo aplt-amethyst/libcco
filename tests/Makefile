@@ -25,9 +25,12 @@ BENCH_SRC := benchmarks/benchmark_main.c
 BENCH_OBJ := $(TARGET_DIR)/benchmarks/benchmark_main.o
 BENCH_BIN := $(TARGET_DIR)/run_benchmarks
 
-.PHONY: all clean unit_tests integration_tests fuzz_tests benchmarks dirs
+.PHONY: all clean unit_tests integration_tests fuzz_tests benchmarks dirs e2e
 
 all: dirs unit_tests integration_tests
+
+e2e: dirs
+	@$(MAKE) -C e2e all CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)"
 
 dirs:
 	@mkdir -p $(TARGET_DIR)/unit $(TARGET_DIR)/integration $(TARGET_DIR)/fuzz $(TARGET_DIR)/benchmarks

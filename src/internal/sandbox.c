@@ -14,8 +14,8 @@
 #define cco_realpath(path, resolved) realpath(path, resolved)
 #endif
 
-cco_error_t cco_sandbox_check_path(const cco_parse_options_t* opts,
-                                   const char* path)
+int cco_sandbox_check_path(const cco_parse_options_t* opts,
+                           const char* path)
 {
     if (!opts || !path)
         return CCO_ERR_INVALID_ARG;

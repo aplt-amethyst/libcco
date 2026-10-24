@@ -71,21 +71,12 @@ cco_object_t* cco_object_create(cco_type_t type)
     cco_object_t* obj = NULL;
     if (g_active_dom_arena) {
         obj = cco_arena_alloc(g_active_dom_arena, sizeof(cco_object_t));
+        if (!obj) return NULL;
+        memset(obj, 0, sizeof(cco_object_t));
         obj->type = type;
         obj->flags = 1; // arena node
         obj->refcount = 1;
         obj->dom_arena = NULL;
-        if (type == CCO_TYPE_MAP) {
-            obj->as.map.count = 0;
-            obj->as.map.capacity = 0;
-            obj->as.map.keys = NULL;
-            obj->as.map.values = NULL;
-            obj->as.map.hashes = NULL;
-        } else if (type == CCO_TYPE_ARRAY) {
-            obj->as.array.count = 0;
-            obj->as.array.capacity = 0;
-            obj->as.array.items = NULL;
-        }
         return obj;
     }
 
@@ -118,8 +109,9 @@ void cco_object_release(cco_object_t* obj)
         return;
     if (obj->flags & 1) { // Arena DOM node
         if (obj->dom_arena && !(obj->flags & 2)) {
-            cco_arena_destroy(obj->dom_arena);
-            free(obj->dom_arena);
+            cco_arena_t* arena = obj->dom_arena;
+            cco_arena_destroy(arena);
+            free(arena);
         }
         return;
     }
@@ -158,6 +150,11 @@ void cco_object_release(cco_object_t* obj)
             cco_fast_free(obj->as.map.hashes, obj->as.map.capacity * sizeof(uint32_t));
             break;
         case CCO_TYPE_TEMPLATE_INSTANCE:
+            if (obj->as.tmpl_inst.template_name)
+            {
+                free(obj->as.tmpl_inst.template_name);
+                obj->as.tmpl_inst.template_name = NULL;
+            }
             for (size_t i = 0; i < obj->as.tmpl_inst.fields.count; i++)
             {
                 cco_fast_free(obj->as.tmpl_inst.fields.keys[i], strlen(obj->as.tmpl_inst.fields.keys[i]) + 1);
@@ -184,7 +181,8 @@ static char* cco_strdup(const char* s)
     if (!s)
         return NULL;
     size_t len = strlen(s);
-    char* copy = (char*)malloc(len + 1);
+    size_t alloc_size = (len + 1 <= 16) ? 16 : (len + 1);
+    char* copy = (char*)malloc(alloc_size);
     if (copy)
     {
         memcpy(copy, s, len + 1);
@@ -265,7 +263,7 @@ cco_object_t* cco_object_clone(const cco_object_t* obj)
         break;
     case CCO_TYPE_TEMPLATE_INSTANCE:
         copy->as.tmpl_inst.template_name =
-            obj->as.tmpl_inst.template_name; /* interned pointer */
+            obj->as.tmpl_inst.template_name ? cco_strdup(obj->as.tmpl_inst.template_name) : NULL;
         copy->as.tmpl_inst.fields.count = obj->as.tmpl_inst.fields.count;
         copy->as.tmpl_inst.fields.capacity = obj->as.tmpl_inst.fields.capacity;
         if (copy->as.tmpl_inst.fields.capacity > 0)
@@ -341,7 +339,10 @@ bool cco_object_equals(const cco_object_t* a, const cco_object_t* b)
         }
         return true;
     case CCO_TYPE_TEMPLATE_INSTANCE:
-        if (a->as.tmpl_inst.template_name != b->as.tmpl_inst.template_name)
+        if ((a->as.tmpl_inst.template_name == NULL) != (b->as.tmpl_inst.template_name == NULL))
+            return false;
+        if (a->as.tmpl_inst.template_name &&
+            strcmp(a->as.tmpl_inst.template_name, b->as.tmpl_inst.template_name) != 0)
             return false;
         if (a->as.tmpl_inst.fields.count != b->as.tmpl_inst.fields.count)
             return false;
@@ -465,6 +466,43 @@ cco_error_t cco_map_append_fast(cco_object_t* map, const char* key, cco_object_t
     return cco_map_append_fast_len(map, key, strlen(key), value);
 }
 
+bool cco_map_has_key(const cco_object_t* map, const char* key)
+{
+    if (!map || map->type != CCO_TYPE_MAP || !key)
+        return false;
+    size_t klen = strlen(key);
+    uint32_t hash = fast_hash(key, klen);
+    for (size_t i = 0; i < map->as.map.count; i++)
+    {
+        if (map->as.map.hashes && map->as.map.hashes[i] != hash)
+            continue;
+        if (map->as.map.keys[i] && strcmp(map->as.map.keys[i], key) == 0)
+            return true;
+    }
+    return false;
+}
+
+cco_error_t cco_map_set(cco_object_t* map, const char* key,
+                        cco_object_t* value)
+{
+    if (!map || map->type != CCO_TYPE_MAP || !key || !value)
+        return CCO_ERR_INVALID_ARG;
+    size_t klen = strlen(key);
+    uint32_t hash = fast_hash(key, klen);
+    for (size_t i = 0; i < map->as.map.count; i++)
+    {
+        if ((!map->as.map.hashes || map->as.map.hashes[i] == hash) &&
+            map->as.map.keys[i] && strcmp(map->as.map.keys[i], key) == 0)
+        {
+            cco_object_release(map->as.map.values[i]);
+            map->as.map.values[i] = value;
+            cco_object_retain(value);
+            return CCO_OK;
+        }
+    }
+    return cco_map_insert(map, key, value);
+}
+
 cco_error_t cco_map_insert(cco_object_t* map, const char* key,
                            cco_object_t* value)
 {
@@ -474,12 +512,10 @@ cco_error_t cco_map_insert(cco_object_t* map, const char* key,
     uint32_t hash = fast_hash(key, klen);
     for (size_t i = 0; i < map->as.map.count; i++)
     {
-        if (map->as.map.hashes[i] == hash && strcmp(map->as.map.keys[i], key) == 0)
+        if ((!map->as.map.hashes || map->as.map.hashes[i] == hash) &&
+            map->as.map.keys[i] && strcmp(map->as.map.keys[i], key) == 0)
         {
-            cco_object_release(map->as.map.values[i]);
-            map->as.map.values[i] = value;
-            cco_object_retain(value);
-            return CCO_OK;
+            return CCO_ERR_PARSE;
         }
     }
     if (map->as.map.count >= map->as.map.capacity)
@@ -524,11 +560,9 @@ cco_error_t cco_tmpl_inst_insert(cco_object_t* inst, const char* key, cco_object
     size_t klen = strlen(key);
     uint32_t hash = fast_hash(key, klen);
     for (size_t i = 0; i < inst->as.tmpl_inst.fields.count; i++) {
-        if (inst->as.tmpl_inst.fields.hashes[i] == hash && strcmp(inst->as.tmpl_inst.fields.keys[i], key) == 0) {
-            cco_object_release(inst->as.tmpl_inst.fields.values[i]);
-            inst->as.tmpl_inst.fields.values[i] = value;
-            cco_object_retain(value);
-            return CCO_OK;
+        if ((!inst->as.tmpl_inst.fields.hashes || inst->as.tmpl_inst.fields.hashes[i] == hash) &&
+            inst->as.tmpl_inst.fields.keys[i] && strcmp(inst->as.tmpl_inst.fields.keys[i], key) == 0) {
+            return CCO_ERR_PARSE;
         }
     }
     if (inst->as.tmpl_inst.fields.count >= inst->as.tmpl_inst.fields.capacity) {

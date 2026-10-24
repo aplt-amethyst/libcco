@@ -356,14 +356,14 @@ static cco_error_t serialize_recursive_inner(const cco_object_t* obj,
     return err;
 }
 
-cco_error_t cco_serialize(const cco_object_t* obj, cco_strbuf_t* out_buf,
-                          bool pretty)
+cco_error_t cco_serialize_buffer(const cco_object_t* obj, cco_strbuf_t* out_buf,
+                                 bool pretty, int indent_spaces)
 {
     if (!obj || !out_buf)
         return CCO_ERR_INVALID_ARG;
     cco_serializer_context_t ctx;
     ctx.pretty = pretty;
-    ctx.indent_spaces = 4;
+    ctx.indent_spaces = indent_spaces > 0 ? indent_spaces : 2;
     ctx.current_indent = 0;
     ctx.depth = 0;
     ctx.out = out_buf;

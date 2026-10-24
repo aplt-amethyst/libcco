@@ -22,7 +22,7 @@ struct cco_scope_s {
 void cco_scope_init(cco_scope_t* scope, cco_scope_t* parent);
 void cco_scope_destroy(cco_scope_t* scope);
 
-/* cco_scope_bind 接管 val 所有权，调用方释放完不能再用。 */
+/* cco_scope_bind takes ownership of val; caller must not release or reuse it. */
 cco_error_t cco_scope_bind(cco_scope_t* scope, const char* name, cco_object_t* value);
 
 /* Lookup an object by name.

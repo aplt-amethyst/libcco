@@ -233,31 +233,7 @@ examples: build.debug ## Build one example: make examples name=<file>
 ##@ Quality
 
 check-symbols: $(SHARED_TARGET) ## Validate exported symbols in shared library
-	@$(STEP) "checking exported symbols in $(SHARED_TARGET)"
-	@if ! command -v $(NM) >/dev/null 2>&1; then \
-		$(ERR) "$(NM) not found"; exit 1; \
-	fi
-	@symbols=$$($(NM) -D --defined-only $(SHARED_TARGET) 2>/dev/null | awk '{print $$NF}' | sort); \
-	count=$$(echo "$$symbols" | grep -c . || true); \
-	if [ "$$count" -ne 21 ]; then \
-		$(ERR) "expected exactly 21 exported symbols, found $$count"; \
-		echo "$$symbols"; \
-		exit 1; \
-	fi; \
-	expected="cco_arena_free cco_arena_new cco_arena_reset cco_array_get_count cco_array_get_item cco_clear_diagnostics cco_get_last_error cco_map_get_by_key cco_map_get_count cco_map_get_key cco_map_get_value cco_object_get_boolean cco_object_get_float cco_object_get_integer cco_object_get_string cco_object_get_type cco_object_release cco_object_retain cco_parse_options_init cco_parse_string cco_serialize_to_string"; \
-	for sym in $$expected; do \
-		if ! echo "$$symbols" | grep -qx "$$sym"; then \
-			$(ERR) "missing expected symbol: $$sym"; \
-			exit 1; \
-		fi; \
-	done; \
-	for sym in $$symbols; do \
-		if ! echo " $$expected " | grep -q " $$sym "; then \
-			$(ERR) "leaked unexpected symbol: $$sym"; \
-			exit 1; \
-		fi; \
-	done; \
-	$(OK) "verified exactly 21 public symbols and 0 internal leaks in $(SHARED_TARGET)"
+	@bash scripts/check-symbol-export.sh $(SHARED_TARGET)
 
 tests: build.debug ## Build and run the test suite
 	@if [ -f $(TEST_DIR)/Makefile ]; then \
@@ -273,6 +249,10 @@ tests: build.debug ## Build and run the test suite
 	else \
 		$(WARN) "no tests found in $(TEST_DIR)/"; \
 	fi
+
+e2e: build.debug ## Build and run the opaque-box E2E test suite (ARGS="..." to filter)
+	@$(STEP) "run E2E test suite"
+	@$(MAKE) -C $(TEST_DIR)/e2e all CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" ARGS="$(ARGS)"
 
 coverage: ## Run tests with gcov code coverage enabled
 	@$(STEP) "clean build before coverage"

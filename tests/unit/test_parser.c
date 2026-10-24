@@ -278,4 +278,106 @@ void test_parser(void) {
             cco_object_release(lenient_obj);
         }
     }
+
+    /* Test 18: Function declaration with default parameter expressions */
+    {
+        const char* fn_src = "$function.calc<x: Integer, factor: Integer = 2>: ((x * factor)), (res: 0)";
+        obj = cco_parse_string(fn_src, strlen(fn_src), NULL);
+        EXPECT_TRUE(obj != NULL);
+        if (obj) {
+            EXPECT_EQ_INT(CCO_TYPE_MAP, cco_object_get_type(obj));
+            cco_object_release(obj);
+        }
+    }
+
+    /* Test 19: Multiple function declarations in document */
+    {
+        const char* fns_src = "$function.fn1<a: Integer>: (a + 1),\n$function.fn2<b: Integer>: (b * 2),\n(done: true)";
+        obj = cco_parse_string(fns_src, strlen(fns_src), NULL);
+        EXPECT_TRUE(obj != NULL);
+        if (obj) {
+            EXPECT_EQ_INT(CCO_TYPE_MAP, cco_object_get_type(obj));
+            cco_object_release(obj);
+        }
+    }
+
+    /* Test 20: Template instance lifetime & template_name heap safety */
+    {
+        const char* tmpl_src = "$temp.Point: (x: Integer, y: Integer), (p: #Point(10, 20))";
+        obj = cco_parse_string(tmpl_src, strlen(tmpl_src), NULL);
+        EXPECT_TRUE(obj != NULL);
+        if (obj) {
+            cco_object_t* p = cco_map_get_by_key(obj, "p");
+            EXPECT_TRUE(p != NULL);
+            if (p) {
+                EXPECT_EQ_INT(CCO_TYPE_TEMPLATE_INSTANCE, cco_object_get_type(p));
+                EXPECT_TRUE(p->as.tmpl_inst.template_name != NULL);
+                EXPECT_TRUE(strcmp(p->as.tmpl_inst.template_name, "Point") == 0);
+
+                cco_object_t* clone = cco_object_clone(p);
+                EXPECT_TRUE(clone != NULL);
+                if (clone) {
+                    EXPECT_TRUE(cco_object_equals(p, clone));
+                    cco_object_release(clone);
+                }
+            }
+            cco_object_release(obj);
+        }
+    }
+
+    /* Test 21: Duplicate template declaration rejection */
+    {
+        const char* dup_src = "$temp.Point: (x: Integer), $temp.Point: (x: Integer), (val: 1)";
+        obj = cco_parse_string(dup_src, strlen(dup_src), NULL);
+        EXPECT_TRUE(obj == NULL);
+        EXPECT_EQ_INT(CCO_ERR_PARSE, cco_get_last_error());
+    }
+
+    /* Test 22: Cross-category redefinition rejection */
+    {
+        const char* redef1 = "$typedef.Point: Integer, $temp.Point: (x: Integer), (val: 1)";
+        obj = cco_parse_string(redef1, strlen(redef1), NULL);
+        EXPECT_TRUE(obj == NULL);
+        EXPECT_EQ_INT(CCO_ERR_PARSE, cco_get_last_error());
+
+        const char* redef2 = "$enum.Mode = (Fast, Safe), $temp.Mode: (x: Integer), (val: 1)";
+        obj = cco_parse_string(redef2, strlen(redef2), NULL);
+        EXPECT_TRUE(obj == NULL);
+        EXPECT_EQ_INT(CCO_ERR_PARSE, cco_get_last_error());
+
+        const char* redef3 = "$temp.Mode: (x: Integer), $enum.Mode = (Fast, Safe), (val: 1)";
+        obj = cco_parse_string(redef3, strlen(redef3), NULL);
+        EXPECT_TRUE(obj == NULL);
+        EXPECT_EQ_INT(CCO_ERR_PARSE, cco_get_last_error());
+    }
+
+    /* Test 23: Type checking with typedef alias to Any and to Enum */
+    {
+        const char* alias_any = "$typedef.MyAny: Any, $temp.Box: (item: MyAny), (b: #Box(\"hello\"))";
+        obj = cco_parse_string(alias_any, strlen(alias_any), NULL);
+        EXPECT_TRUE(obj != NULL);
+        if (obj) cco_object_release(obj);
+
+        const char* alias_enum = "$enum.Level = (Low, High), $typedef.TaskLevel: Level, $temp.Task: (lvl: TaskLevel), (t: #Task(High))";
+        obj = cco_parse_string(alias_enum, strlen(alias_enum), NULL);
+        EXPECT_TRUE(obj != NULL);
+        if (obj) cco_object_release(obj);
+    }
+
+    /* Test 24: Dotted template instantiation */
+    {
+        const char* dotted_src = "$temp.Hook.Function: (id: Integer, name: String), (h: #Hook.Function(1, \"test\"))";
+        obj = cco_parse_string(dotted_src, strlen(dotted_src), NULL);
+        EXPECT_TRUE(obj != NULL);
+        if (obj) {
+            cco_object_t* h = cco_map_get_by_key(obj, "h");
+            EXPECT_TRUE(h != NULL);
+            if (h) {
+                EXPECT_EQ_INT(CCO_TYPE_TEMPLATE_INSTANCE, cco_object_get_type(h));
+                EXPECT_TRUE(h->as.tmpl_inst.template_name != NULL);
+                EXPECT_TRUE(strcmp(h->as.tmpl_inst.template_name, "Hook.Function") == 0);
+            }
+            cco_object_release(obj);
+        }
+    }
 }
